@@ -24,6 +24,7 @@ class PlatformAdapter(ABC):
 		user: UserProfile,
 		pitch: str,
 		dry_run: bool = True,
+		mode: str = 'ask',
 	) -> str:
 		"""Generate application task prompt for this platform."""
 		pass

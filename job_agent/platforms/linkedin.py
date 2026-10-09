@@ -21,5 +21,6 @@ class LinkedInAdapter(PlatformAdapter):
 		user: UserProfile,
 		pitch: str,
 		dry_run: bool = True,
+		mode: str = 'ask',
 	) -> str:
-		return build_application_prompt(job, user, pitch, dry_run=dry_run)
+		return build_application_prompt(job, user, pitch, dry_run=dry_run, mode=mode)

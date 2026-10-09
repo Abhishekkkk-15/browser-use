@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from job_agent.config import JobPreferences, UserProfile
+from job_agent.config import AgentConfig, JobPreferences, UserProfile
 from job_agent.database import JobTracker
 from job_agent.orchestrator import JobAgentOrchestrator, get_default_llm
 from job_agent.prompts.pitch_prompt import build_pitch_prompt
@@ -41,6 +41,215 @@ def cli(debug: bool) -> None:
 		format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
 		datefmt='%H:%M:%S',
 	)
+
+
+# ==============================================================================
+# AUTONOMOUS & AUTHENTICATION COMMANDS
+# ==============================================================================
+
+
+@cli.command(name='auth')
+@click.option(
+	'--platforms',
+	default='linkedin,gmail',
+	help='Comma-separated websites to open for initial login (e.g. linkedin,gmail,wellfound,naukri)',
+)
+def auth_command(platforms: str) -> None:
+	"""Open headful Chrome to log into accounts once. Saves session cookies permanently with ZERO credentials in .env."""
+	console.print(
+		Panel.fit(
+			'[bold cyan]🔑 Browser Session Authenticator[/bold cyan]\n\n'
+			'1. A visible Chrome browser window will now open.\n'
+			'2. Log into your accounts (LinkedIn, Google / Gmail, Wellfound, Naukri).\n'
+			'3. Solve any 2FA or security challenges in the browser.\n'
+			'4. Once logged in, return here and press [bold green]Enter[/bold green].\n\n'
+			'[dim]All session tokens & cookies will be saved locally to job_agent/data/browser_storage_state.json.\n'
+			'No passwords or secrets are ever saved in text or .env files![/dim]',
+			title='One-Time Browser Auth',
+			border_style='green',
+		)
+	)
+
+	platform_urls = {
+		'linkedin': 'https://www.linkedin.com/login',
+		'gmail': 'https://mail.google.com/',
+		'wellfound': 'https://wellfound.com/login',
+		'naukri': 'https://www.naukri.com/nlogin/login',
+	}
+
+	targets = [p.strip().lower() for p in platforms.split(',') if p.strip()]
+	initial_url = (
+		platform_urls.get(targets[0], 'https://www.linkedin.com/login')
+		if targets
+		else 'https://www.linkedin.com/login'
+	)
+
+	from browser_use import BrowserProfile, BrowserSession
+	from job_agent.config import AgentConfig
+
+	agent_config = AgentConfig()
+	agent_config.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+
+	profile = BrowserProfile(
+		user_data_dir=agent_config.chrome_user_data_dir,
+		storage_state=str(agent_config.storage_state_path),
+		headless=False,
+		keep_alive=True,
+		ignore_default_args=[
+			'--disable-window-activation',
+			'--disable-focus-on-load',
+		],
+	)
+	session = BrowserSession(browser_profile=profile)
+
+	async def _run_auth() -> None:
+		await session.start()
+		await session.navigate(initial_url)
+		for p in targets[1:]:
+			url = platform_urls.get(p)
+			if url:
+				await session.create_new_tab(url)
+
+		from rich.prompt import Prompt
+
+		loop = asyncio.get_running_loop()
+		await loop.run_in_executor(
+			None,
+			lambda: Prompt.ask(
+				'\n[bold yellow]👉 When you have logged into all accounts in Chrome, press [Enter] here[/bold yellow]'
+			),
+		)
+		console.print('\n[cyan]Finalizing and saving browser session state...[/cyan]')
+		await asyncio.sleep(2)  # Allow StorageStateWatchdog to save cookies
+		await session.stop()
+		console.print(
+			f'[bold green]✅ Success! Browser session saved to: {agent_config.storage_state_path}[/bold green]'
+		)
+		console.print(
+			'[green]You can now run [bold]job-agent auto[/bold] with 100% autonomous operation and zero credentials in .env![/green]'
+		)
+
+	asyncio.run(_run_auth())
+
+
+@cli.command(name='auto')
+@click.option(
+	'--mode',
+	type=click.Choice(['free', 'ask'], case_sensitive=False),
+	default='ask',
+	help="Execution mode: 'free' (100% autonomous autopilot) or 'ask' (human confirmation before submit/send)",
+)
+@click.option('--free', 'flag_free', is_flag=True, help='Shortcut to enable Free mode (100% autonomous autopilot)')
+@click.option('--ask', 'flag_ask', is_flag=True, help='Shortcut to enable Ask mode (prompts human before submit/send)')
+@click.option('--dry-run/--live', default=False, help='Run live or dry-run simulation mode')
+@click.option('--platforms', default='linkedin,wellfound', help='Comma-separated target job boards')
+@click.option(
+	'--roles',
+	default='Applied AI Engineer,AI Engineer,Software Engineer',
+	help='Target roles to search',
+)
+@click.option('--locations', default='Remote', help='Target locations or Remote')
+@click.option(
+	'--min-fit',
+	default=45.0,
+	type=float,
+	help='Minimum Best-Fit score percentage required to apply',
+)
+@click.option('--max-apply', default=5, type=int, help='Maximum number of applications to submit')
+@click.option('--login-first', is_flag=True, help='Prompt to authenticate in browser before running')
+def auto_command(
+	mode: str,
+	flag_free: bool,
+	flag_ask: bool,
+	dry_run: bool,
+	platforms: str,
+	roles: str,
+	locations: str,
+	min_fit: float,
+	max_apply: int,
+	login_first: bool,
+) -> None:
+	"""Autonomous end-to-end recruitment agent with zero credentials and Free / Ask mode."""
+	selected_mode = 'free' if flag_free else ('ask' if flag_ask else mode.lower())
+
+	agent_config = AgentConfig()
+	storage_file = agent_config.storage_state_path
+
+	if login_first or not storage_file.exists():
+		from rich.prompt import Confirm
+
+		console.print('[yellow]Notice: No saved browser session found.[/yellow]')
+		if login_first or Confirm.ask('Would you like to log into your accounts in Chrome now?', default=True):
+			ctx = click.get_current_context()
+			ctx.invoke(auth_command, platforms=platforms)
+
+	console.print(
+		Panel.fit(
+			f'[bold cyan]🤖 Autonomous Job Application Agent[/bold cyan]\n\n'
+			f'[yellow]Operating Mode:[/yellow] '
+			f'{"[bold green]FREE MODE (100% Autonomous Autopilot)[/bold green]" if selected_mode == "free" else "[bold yellow]ASK MODE (Human Confirmation Before Submit/Send)[/bold yellow]"}\n'
+			f'[yellow]Submission Mode:[/yellow] {"[dim]DRY RUN (Simulated)[/dim]" if dry_run else "[bold red]LIVE SUBMISSION[/bold red]"}\n'
+			f'[yellow]Target Roles:[/yellow] {roles}\n'
+			f'[yellow]Locations:[/yellow] {locations}\n'
+			f'[yellow]Platforms:[/yellow] {platforms}\n'
+			f'[yellow]Min Best-Fit Score:[/yellow] {min_fit}%\n'
+			f'[yellow]Max Applications:[/yellow] {max_apply}\n'
+			f'[yellow]Email Outreach:[/yellow] Browser-Native (Gmail Web Compose, Zero SMTP)\n'
+			f'[yellow]Session Storage:[/yellow] {storage_file}',
+			title='Autonomous Mode Activated',
+			border_style='green' if selected_mode == 'free' else 'yellow',
+		)
+	)
+
+	user_profile = UserProfile.from_env_or_defaults()
+	platform_list = [p.strip().lower() for p in platforms.split(',') if p.strip()]
+
+	preferences = JobPreferences(
+		target_roles=[r.strip() for r in roles.split(',') if r.strip()],
+		target_locations=[loc.strip() for loc in locations.split(',') if loc.strip()],
+		platforms=platform_list,  # type: ignore
+		max_applications_per_run=max_apply,
+		dry_run=dry_run,
+		auto_cold_email=True,
+		mode=selected_mode,  # type: ignore
+		min_fit_score=min_fit,
+		use_browser_email=True,
+	)
+
+	orchestrator = JobAgentOrchestrator(
+		user_profile=user_profile,
+		preferences=preferences,
+		agent_config=agent_config,
+	)
+
+	results = asyncio.run(
+		orchestrator.run_autonomous_pipeline(
+			mode=selected_mode,
+			platforms=platform_list,
+			max_applications=max_apply,
+			min_fit_score=min_fit,
+			dry_run=dry_run,
+		)
+	)
+
+	stats = results.get('stats', {})
+	summary_table = Table(title='[Autonomous Campaign Results]', border_style='green', box=box.ROUNDED)
+	summary_table.add_column('Metric', style='bold cyan')
+	summary_table.add_column('Count', style='bold white')
+	summary_table.add_row('Jobs Discovered', str(stats.get('total_found', 0)))
+	summary_table.add_row('Applications Submitted', str(stats.get('total_applied', 0)))
+	summary_table.add_row('Recruiter Contacts Found', str(stats.get('total_hr_emails', 0)))
+	summary_table.add_row('Browser Outreach Emails', str(stats.get('total_emails_sent', 0)))
+
+	console.print()
+	console.print(summary_table)
+	console.print(
+		"\n[bold green]Campaign cycle complete! Run 'job-agent stats' or 'job-agent jobs' to inspect details.[/bold green]"
+	)
+
+
+# Add login alias for auth
+cli.add_command(auth_command, name='login')
 
 
 # ==============================================================================

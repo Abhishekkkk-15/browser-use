@@ -10,20 +10,33 @@ def build_application_prompt(
 	user: UserProfile,
 	custom_pitch: str,
 	dry_run: bool = True,
+	mode: str = 'ask',
 ) -> str:
 	job_url = job.get('job_url', '')
 	job_title = job.get('job_title', 'Software Engineer')
 	company_name = job.get('company_name', 'Company')
 	platform = job.get('platform', 'linkedin')
 
-	submit_instruction = (
-		'DRY RUN MODE ENABLED: Fill all form fields completely and advance to the final review step. '
-		"DO NOT CLICK the final 'Submit application' button! Instead, take a screenshot of the filled form, "
-		"and call mark_applied(job_url, status='applied', notes='[DRY RUN] Form filled and verified successfully')."
-		if dry_run
-		else "LIVE SUBMISSION: After reviewing all answers and ensuring fields are accurate, click the final 'Submit application' button. "
-		"Verify the confirmation modal appears, then call mark_applied(job_url, status='applied')."
-	)
+	if dry_run:
+		submit_instruction = (
+			'DRY RUN MODE ENABLED: Fill all form fields completely and advance to the final review step. '
+			"DO NOT CLICK the final 'Submit application' button! Instead, take a screenshot of the filled form, "
+			"and call mark_applied(job_url, status='applied', notes='[DRY RUN] Form filled and verified successfully')."
+		)
+	elif mode == 'ask':
+		submit_instruction = (
+			"ASK MODE ENABLED (HUMAN CONFIRMATION REQUIRED): When you reach the final review page, you MUST call "
+			f"request_human_confirmation(action='submit_application', company_name='{company_name}', role='{job_title}', "
+			"details='Form filled with contact info and screening answers', preview_content='Ready to submit').\n"
+			"   - If the tool result is APPROVED: click the final 'Submit application' button, verify confirmation modal, and call mark_applied(job_url, status='applied').\n"
+			"   - If the tool result is REJECTED: close or cancel the application modal, and call mark_applied(job_url, status='found', notes='Skipped by user').\n"
+			"   - If the tool result is EDITED: update fields as requested and then click Submit."
+		)
+	else:
+		submit_instruction = (
+			"AUTONOMOUS FREE MODE: After reviewing all answers and ensuring fields are accurate, click the final 'Submit application' button. "
+			"Verify the confirmation modal appears, then call mark_applied(job_url, status='applied')."
+		)
 
 	return f"""
 You are an autonomous AI job application agent applying to a position on behalf of the candidate.

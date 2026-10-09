@@ -95,6 +95,15 @@ class JobAgentOrchestrator:
 			agent_config=self.agent_config,
 			llm=self.llm,
 		)
+		from job_agent.agents.browser_email_agent import BrowserEmailAgent
+
+		self.browser_email_agent = BrowserEmailAgent(
+			tracker=self.tracker,
+			user_profile=self.user_profile,
+			preferences=self.preferences,
+			agent_config=self.agent_config,
+			llm=self.llm,
+		)
 
 	async def run_full_pipeline(self) -> dict[str, Any]:
 		"""Execute the end-to-end recruitment lifecycle:
@@ -107,7 +116,7 @@ class JobAgentOrchestrator:
 		logger.info('=' * 60)
 		logger.info('🚀 STARTING AUTONOMOUS JOB APPLICATION PIPELINE')
 		logger.info(f'Candidate: {self.user_profile.name} | Target: {self.preferences.target_roles}')
-		logger.info(f'Mode: {"DRY RUN (Simulated)" if self.preferences.dry_run else "LIVE SUBMISSION"}')
+		logger.info(f'Mode: {self.preferences.mode.upper()} | Dry Run: {self.preferences.dry_run}')
 		logger.info('=' * 60)
 
 		# Phase 1: Search across platforms
@@ -119,14 +128,17 @@ class JobAgentOrchestrator:
 		extracted_count = await self.extractor_agent.run_batch(limit=10)
 
 		# Phase 3: Applications
-		logger.info('\n--- PHASE 3: SUBMITTING APPLICATIONS ---')
+		logger.info('\n--- PHASE 3: SUBMITTING APPLICATIONS (BEST-FIT RANKED) ---')
 		applied_count = await self.application_agent.run_batch(max_applications=self.preferences.max_applications_per_run)
 
 		# Phase 4: Cold emails (if enabled)
 		email_count = 0
 		if self.preferences.auto_cold_email:
-			logger.info('\n--- PHASE 4: COLD OUTREACH CAMPAIGN ---')
-			email_count = await self.email_agent.run_campaign(limit=5)
+			logger.info('\n--- PHASE 4: COLD OUTREACH CAMPAIGN (BROWSER-NATIVE) ---')
+			if self.preferences.use_browser_email:
+				email_count = await self.browser_email_agent.run_campaign(limit=5)
+			else:
+				email_count = await self.email_agent.run_campaign(limit=5)
 
 		stats = self.tracker.get_stats()
 		logger.info('\n' + '=' * 60)
@@ -145,6 +157,25 @@ class JobAgentOrchestrator:
 			'stats': stats,
 		}
 
+	async def run_autonomous_pipeline(
+		self,
+		mode: str = 'ask',
+		platforms: list[str] | None = None,
+		max_applications: int = 5,
+		min_fit_score: float | None = None,
+		dry_run: bool = False,
+	) -> dict[str, Any]:
+		"""High-level autonomous runner handling Free vs Ask mode end-to-end."""
+		self.preferences.mode = 'free' if mode == 'free' else 'ask'
+		self.preferences.dry_run = dry_run
+		self.preferences.max_applications_per_run = max_applications
+		if min_fit_score is not None:
+			self.preferences.min_fit_score = min_fit_score
+		if platforms:
+			self.preferences.platforms = platforms  # type: ignore
+
+		return await self.run_full_pipeline()
+
 	async def run_search_only(self) -> dict[str, int]:
 		"""Execute only Phase 1: Search and catalog."""
 		return await self.search_agent.run_all()
@@ -159,4 +190,6 @@ class JobAgentOrchestrator:
 
 	async def run_email_only(self, limit: int = 10) -> int:
 		"""Execute only Phase 4: Send cold emails to contacts with known emails."""
+		if self.preferences.use_browser_email:
+			return await self.browser_email_agent.run_campaign(limit=limit)
 		return await self.email_agent.run_campaign(limit=limit)

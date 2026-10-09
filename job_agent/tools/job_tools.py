@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from pydantic import BaseModel, Field
@@ -7,8 +8,19 @@ from pydantic import BaseModel, Field
 from browser_use import ActionResult, Tools
 from job_agent.config import JobPreferences, JobRecord, UserProfile
 from job_agent.database import JobTracker
+from job_agent.services.fit_scorer import JobFitScorer
 
 logger = logging.getLogger(__name__)
+
+
+class ConfirmationParams(BaseModel):
+	action: str = Field(
+		description="Action to execute: 'submit_application', 'send_cold_email', or 'send_linkedin_message'",
+	)
+	company_name: str = Field(description='Hiring company name')
+	role: str = Field(description='Job role title')
+	details: str = Field(description='Summary of answers filled, attachments, or action details')
+	preview_content: str = Field(default='', description='Preview of pitch, cover note, or email body')
 
 
 class SaveJobParams(BaseModel):
@@ -90,10 +102,16 @@ def create_job_tools(
 
 		skills_list = [s.strip() for s in params.required_skills.split(',') if s.strip()]
 
-		# Calculate initial simple match score
-		user_skills_lower = {s.lower() for s in user_profile.skills}
-		matched_skills = [s for s in skills_list if s.lower() in user_skills_lower]
-		match_score = (len(matched_skills) / max(len(skills_list), 1)) * 100.0 if skills_list else 50.0
+		# Calculate comprehensive best-fit score and reasoning
+		fit_result = JobFitScorer.score_fit(
+			{
+				'job_title': params.job_title,
+				'job_description_summary': params.job_description_summary,
+				'required_skills': skills_list,
+			},
+			user_profile,
+		)
+		match_score = fit_result.score
 
 		# Normalize job URL to prevent search URL collisions
 		cleaned_url = params.job_url.strip()
@@ -139,13 +157,14 @@ def create_job_tools(
 			application_type=norm_app_type,
 			status='found',
 			match_score=round(match_score, 1),
+			notes=f'[Fit: {fit_result.reasoning}]' if fit_result.reasoning else None,
 		)
 
 		job_id = tracker.add_job(job_rec)
 		stats = tracker.get_stats()
 		return ActionResult(
 			extracted_content=(
-				f"Saved job #{job_id}: '{params.job_title}' at '{params.company_name}' (Match: {match_score:.0f}%). "
+				f"Saved job #{job_id}: '{params.job_title}' at '{params.company_name}' (Fit: {match_score:.0f}%, {fit_result.reasoning}). "
 				f'Total jobs in tracker: {stats["total_found"]}. Inspect more postings and save at least 5 jobs before concluding.'
 			),
 			include_extracted_content_only_once=True,
@@ -246,5 +265,63 @@ def create_job_tools(
 			extracted_content=f"Recorded HR contact for {params.job_url}: Name='{params.hr_name}', Email='{params.hr_email}', LinkedIn='{params.hr_linkedin}'",
 			include_extracted_content_only_once=True,
 		)
+
+	@tools.action(
+		description="Request human confirmation before performing sensitive actions like final application submission or email sending. In 'ask' mode, pauses and asks the user in CLI. In 'free' mode, approves automatically.",
+		param_model=ConfirmationParams,
+	)
+	async def request_human_confirmation(params: ConfirmationParams) -> ActionResult:
+		"""Check with user before final submit or send."""
+		if preferences.mode == 'free':
+			return ActionResult(
+				extracted_content=f'APPROVED: Autonomous Free Mode is active. Proceeding immediately to {params.action}.',
+			)
+
+		from rich.console import Console
+		from rich.panel import Panel
+		from rich.prompt import Prompt
+
+		cli_console = Console(legacy_windows=False)
+		panel_content = (
+			f'[bold white]Action:[/bold white] [bold yellow]{params.action}[/bold yellow]\n'
+			f'[bold white]Company:[/bold white] [bold cyan]{params.company_name}[/bold cyan]\n'
+			f'[bold white]Role:[/bold white] [bold]{params.role}[/bold]\n'
+			f'[bold white]Details:[/bold white] {params.details}\n'
+		)
+		if params.preview_content:
+			panel_content += f'\n[bold green]Preview Content:[/bold green]\n{params.preview_content[:400]}'
+
+		cli_console.print()
+		cli_console.print(
+			Panel(
+				panel_content,
+				title='[bold yellow]⚠️ Human Confirmation Required (Ask Mode)[/bold yellow]',
+				border_style='yellow',
+			)
+		)
+
+		loop = asyncio.get_running_loop()
+		try:
+			user_choice = await loop.run_in_executor(
+				None,
+				lambda: Prompt.ask('Approve this action?', choices=['y', 'n', 's', 'edit'], default='y'),
+			)
+		except Exception:
+			user_choice = 'y'
+
+		choice_clean = str(user_choice).strip().lower()
+		if choice_clean in ('y', 'yes'):
+			return ActionResult(extracted_content=f'APPROVED: User approved {params.action}. Proceed to execute now.')
+		elif choice_clean in ('n', 'no', 's', 'skip'):
+			return ActionResult(
+				extracted_content=f'REJECTED: User chose to skip {params.action}. Cancel this action and move on.'
+			)
+		else:
+			new_text = await loop.run_in_executor(
+				None, lambda: Prompt.ask('Enter modified message/pitch text to use')
+			)
+			return ActionResult(
+				extracted_content=f"EDITED: User updated content to: '{new_text}'. Use this text and proceed."
+			)
 
 	return tools

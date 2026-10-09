@@ -72,6 +72,7 @@ class ApplicationAgent:
 			user=self.user_profile,
 			pitch=pitch,
 			dry_run=self.preferences.dry_run,
+			mode=self.preferences.mode,
 		)
 
 		available_files: list[str] = []
@@ -79,7 +80,7 @@ class ApplicationAgent:
 			available_files.append(str(self.user_profile.resume_path.resolve()))
 
 		logger.info(
-			f"📝 Applying to '{job.get('job_title')}' at '{job.get('company_name')}' (Dry Run: {self.preferences.dry_run})...",
+			f"📝 Applying to '{job.get('job_title')}' at '{job.get('company_name')}' (Mode: {self.preferences.mode}, Dry Run: {self.preferences.dry_run})...",
 		)
 
 		agent = Agent(
@@ -107,20 +108,30 @@ class ApplicationAgent:
 	async def run_batch(self, max_applications: int | None = None) -> int:
 		"""Apply to pending jobs sequentially with human-like delays to avoid bot flags."""
 		limit = max_applications or self.preferences.max_applications_per_run
-		pending_jobs = self.tracker.get_pending_jobs(limit=limit)
+		pending_jobs = self.tracker.get_pending_jobs(limit=limit * 2)
 
 		if not pending_jobs:
 			logger.info('No pending jobs found in tracker database to apply for.')
 			return 0
 
-		logger.info(f'🚀 Found {len(pending_jobs)} pending jobs to process (Limit: {limit})')
+		# Sort by Best Fit score descending
+		pending_jobs.sort(key=lambda j: j.get('match_score', 0.0), reverse=True)
+		qualified_jobs = [j for j in pending_jobs if j.get('match_score', 0.0) >= self.preferences.min_fit_score]
+		jobs_to_process = qualified_jobs if qualified_jobs else pending_jobs
+
+		logger.info(
+			f'🚀 Found {len(jobs_to_process)} best-fit jobs to process (Min Fit: {self.preferences.min_fit_score}%, Limit: {limit})'
+		)
 
 		# Create browser session for batch processing
 		should_close_session = False
 		session = self.browser_session
 		if session is None:
+			storage_arg = str(self.agent_config.storage_state_path) if self.agent_config.storage_state_path.exists() else None
 			profile = BrowserProfile(
 				user_data_dir=self.agent_config.chrome_user_data_dir,
+				storage_state=storage_arg,
+				cdp_url=self.agent_config.cdp_url,
 				headless=self.agent_config.headless,
 				demo_mode=self.agent_config.demo_mode,
 				keep_alive=True,
@@ -130,7 +141,7 @@ class ApplicationAgent:
 
 		applied_count = 0
 		try:
-			for i, job in enumerate(pending_jobs, 1):
+			for i, job in enumerate(jobs_to_process, 1):
 				if applied_count >= limit:
 					break
 

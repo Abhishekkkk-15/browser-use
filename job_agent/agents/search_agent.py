@@ -68,8 +68,11 @@ class SearchAgent:
 		should_close_session = False
 		session = self.browser_session
 		if session is None:
+			storage_arg = str(self.agent_config.storage_state_path) if self.agent_config.storage_state_path.exists() else None
 			profile = BrowserProfile(
 				user_data_dir=self.agent_config.chrome_user_data_dir,
+				storage_state=storage_arg,
+				cdp_url=self.agent_config.cdp_url,
 				headless=self.agent_config.headless,
 				demo_mode=self.agent_config.demo_mode,
 				keep_alive=True,

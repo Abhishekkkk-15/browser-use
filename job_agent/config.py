@@ -162,8 +162,20 @@ class JobPreferences(BaseModel):
 	)
 	min_salary_lpa: float | None = Field(default=None, description='Minimum expected salary in LPA or local currency')
 	auto_cold_email: bool = Field(
-		default=False,
+		default=True,
 		description='Whether to automatically send cold emails after extracting recruiter contacts',
+	)
+	mode: Literal['free', 'ask'] = Field(
+		default='ask',
+		description="Operating mode: 'free' (autonomous autopilot) or 'ask' (prompts human before submit/send)",
+	)
+	min_fit_score: float = Field(
+		default=40.0,
+		description='Minimum fit percentage required to proceed with automatic application',
+	)
+	use_browser_email: bool = Field(
+		default=True,
+		description='Send cold outreach directly through browser webmail (Gmail) without requiring SMTP credentials',
 	)
 
 
@@ -195,6 +207,18 @@ class AgentConfig(BaseModel):
 	chrome_user_data_dir: str | None = Field(
 		default=os.getenv('CHROME_USER_DATA_DIR', '~/.config/browseruse/profiles/job_agent'),
 		description='Path to persistent Chrome user-data-dir preserving logins',
+	)
+	storage_state_path: Path = Field(
+		default=Path('job_agent/data/browser_storage_state.json'),
+		description='Path to persistent cookies & session storage JSON file',
+	)
+	cdp_url: str | None = Field(
+		default=os.getenv('CDP_URL', None),
+		description='Optional CDP URL to attach to an existing Chrome instance (e.g. http://localhost:9222)',
+	)
+	mode: Literal['free', 'ask'] = Field(
+		default='ask',
+		description="Operating mode: 'free' (full autopilot) or 'ask' (human confirmation before submit/send)",
 	)
 	headless: bool = Field(default=False, description='Run browser in headful mode for visibility and stealth')
 	demo_mode: bool = Field(default=True, description='Display interactive in-browser panel and keep browser visible')
