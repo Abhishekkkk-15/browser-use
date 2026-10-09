@@ -30,10 +30,19 @@ dist/
 *.jsonl
 *.log
 *.bak
+*.db
+*.sqlite
+*.sqlite3
 
 # Secrets and sensitive files
 secrets.env
 .env
+.env.*
+!.env.example
+!job_agent/.env.example
+job_agent/.env
+job_agent/data/
+job_agent/resume/
 browser_cookies.json
 cookies.json
 gcp-login.json

@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+from browser_use.llm.base import BaseChatModel
+from job_agent.agents.application_agent import ApplicationAgent
+from job_agent.agents.email_agent import EmailAgent
+from job_agent.agents.extractor_agent import ExtractorAgent
+from job_agent.agents.search_agent import SearchAgent
+from job_agent.config import AgentConfig, JobPreferences, UserProfile
+from job_agent.database import JobTracker
+
+logger = logging.getLogger(__name__)
+
+
+def get_default_llm() -> BaseChatModel:
+	"""Instantiate the recommended LLM according to available API keys."""
+	openai_key = os.getenv('OPENAI_API_KEY')
+	openai_base_url = os.getenv('OPENAI_BASE_URL') or os.getenv('OPENAI_API_BASE') or os.getenv('OPENAI_ENDPOINT')
+	openai_model = os.getenv('OPENAI_MODEL', 'gpt-5.6-luna')
+	bu_key = os.getenv('BROWSER_USE_API_KEY')
+	anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+	google_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+
+	if openai_key or openai_base_url or os.getenv('OPENAI_MODEL'):
+		from browser_use.llm.openai.chat import ChatOpenAI
+
+		logger.info(f'Using ChatOpenAI model: {openai_model}' + (f' (base_url: {openai_base_url})' if openai_base_url else ''))
+		return ChatOpenAI(model=openai_model, base_url=openai_base_url)
+	elif bu_key:
+		from browser_use.llm.browser_use.chat import ChatBrowserUse
+
+		logger.info('Using ChatBrowserUse model (recommended for browser automation)')
+		return ChatBrowserUse()
+	elif google_key:
+		from browser_use.llm.google.chat import ChatGoogle
+
+		logger.info('Using ChatGoogle model (Gemini)')
+		return ChatGoogle()
+	elif anthropic_key:
+		from browser_use.llm.anthropic.chat import ChatAnthropic
+
+		logger.info('Using ChatAnthropic model (Claude)')
+		return ChatAnthropic()
+	else:
+		from browser_use.llm.openai.chat import ChatOpenAI
+
+		return ChatOpenAI(model=openai_model, base_url=openai_base_url)
+
+
+class JobAgentOrchestrator:
+	"""Top-level controller coordinating the entire multi-agent job application ecosystem."""
+
+	def __init__(
+		self,
+		user_profile: UserProfile | None = None,
+		preferences: JobPreferences | None = None,
+		agent_config: AgentConfig | None = None,
+		llm: BaseChatModel | None = None,
+	):
+		self.user_profile = user_profile or UserProfile.from_env_or_defaults()
+		self.preferences = preferences or JobPreferences()
+		self.agent_config = agent_config or AgentConfig()
+		self.tracker = JobTracker(self.agent_config.database_path)
+		self.llm = llm or get_default_llm()
+
+		# Sub-agents
+		self.search_agent = SearchAgent(
+			tracker=self.tracker,
+			user_profile=self.user_profile,
+			preferences=self.preferences,
+			agent_config=self.agent_config,
+			llm=self.llm,
+		)
+		self.application_agent = ApplicationAgent(
+			tracker=self.tracker,
+			user_profile=self.user_profile,
+			preferences=self.preferences,
+			agent_config=self.agent_config,
+			llm=self.llm,
+		)
+		self.extractor_agent = ExtractorAgent(
+			tracker=self.tracker,
+			user_profile=self.user_profile,
+			preferences=self.preferences,
+			agent_config=self.agent_config,
+			llm=self.llm,
+		)
+		self.email_agent = EmailAgent(
+			tracker=self.tracker,
+			user_profile=self.user_profile,
+			preferences=self.preferences,
+			agent_config=self.agent_config,
+			llm=self.llm,
+		)
+
+	async def run_full_pipeline(self) -> dict[str, Any]:
+		"""Execute the end-to-end recruitment lifecycle:
+
+		Phase 1: Search & catalog opportunities
+		Phase 2: Extract HR contacts & intelligence
+		Phase 3: Autonomous form application (Easy Apply)
+		Phase 4: Personalized cold email campaign
+		"""
+		logger.info('=' * 60)
+		logger.info('🚀 STARTING AUTONOMOUS JOB APPLICATION PIPELINE')
+		logger.info(f'Candidate: {self.user_profile.name} | Target: {self.preferences.target_roles}')
+		logger.info(f'Mode: {"DRY RUN (Simulated)" if self.preferences.dry_run else "LIVE SUBMISSION"}')
+		logger.info('=' * 60)
+
+		# Phase 1: Search across platforms
+		logger.info('\n--- PHASE 1: DISCOVERY & SEARCH ---')
+		search_counts = await self.search_agent.run_all()
+
+		# Phase 2: Recruiter intelligence extraction
+		logger.info('\n--- PHASE 2: RECRUITER INTELLIGENCE EXTRACTION ---')
+		extracted_count = await self.extractor_agent.run_batch(limit=10)
+
+		# Phase 3: Applications
+		logger.info('\n--- PHASE 3: SUBMITTING APPLICATIONS ---')
+		applied_count = await self.application_agent.run_batch(max_applications=self.preferences.max_applications_per_run)
+
+		# Phase 4: Cold emails (if enabled)
+		email_count = 0
+		if self.preferences.auto_cold_email:
+			logger.info('\n--- PHASE 4: COLD OUTREACH CAMPAIGN ---')
+			email_count = await self.email_agent.run_campaign(limit=5)
+
+		stats = self.tracker.get_stats()
+		logger.info('\n' + '=' * 60)
+		logger.info('🏁 PIPELINE EXECUTION FINISHED')
+		logger.info(f'Total Found: {stats["total_found"]}')
+		logger.info(f'Total Applied: {stats["total_applied"]}')
+		logger.info(f'HR Emails Discovered: {stats["total_hr_emails"]}')
+		logger.info(f'Cold Emails Sent: {stats["total_emails_sent"]}')
+		logger.info('=' * 60)
+
+		return {
+			'search_counts': search_counts,
+			'extracted_count': extracted_count,
+			'applied_count': applied_count,
+			'email_count': email_count,
+			'stats': stats,
+		}
+
+	async def run_search_only(self) -> dict[str, int]:
+		"""Execute only Phase 1: Search and catalog."""
+		return await self.search_agent.run_all()
+
+	async def run_apply_only(self, limit: int | None = None) -> int:
+		"""Execute only Phase 3: Apply to already discovered pending jobs."""
+		return await self.application_agent.run_batch(max_applications=limit)
+
+	async def run_extract_only(self, limit: int = 15) -> int:
+		"""Execute only Phase 2: Extract HR contacts for pending jobs."""
+		return await self.extractor_agent.run_batch(limit=limit)
+
+	async def run_email_only(self, limit: int = 10) -> int:
+		"""Execute only Phase 4: Send cold emails to contacts with known emails."""
+		return await self.email_agent.run_campaign(limit=limit)
