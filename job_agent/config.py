@@ -230,3 +230,18 @@ class AgentConfig(BaseModel):
 	action_delay_seconds_max: float = Field(default=18.0, description='Max randomized delay between applications')
 	save_screenshots: bool = Field(default=True, description='Save visual verification screenshots')
 	database_path: Path = Field(default=Path('job_agent/data/jobs_tracker.db'), description='SQLite database path')
+
+	def clean_profile_locks(self) -> None:
+		"""Remove stale Chrome lock files to prevent startup freezes and SingletonLock collisions."""
+		if not self.chrome_user_data_dir:
+			return
+		expanded = Path(os.path.expanduser(self.chrome_user_data_dir))
+		if not expanded.exists():
+			return
+		for lock_name in ('SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'):
+			lock_p = expanded / lock_name
+			if lock_p.exists():
+				try:
+					lock_p.unlink(missing_ok=True)
+				except Exception:
+					pass

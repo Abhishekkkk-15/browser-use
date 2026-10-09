@@ -147,10 +147,18 @@ class ApplicationAgent:
 
 				logger.info(f'[{i}/{len(pending_jobs)}] Processing: {job.get("job_title")} at {job.get("company_name")}')
 
-				pitch = await self.generate_pitch(job)
-				success = await self.apply_to_job(job, pitch, session)
-				if success:
-					applied_count += 1
+				try:
+					pitch = await self.generate_pitch(job)
+					success = await self.apply_to_job(job, pitch, session)
+					if success:
+						applied_count += 1
+				except Exception as job_err:
+					logger.error(f'Error applying to {job.get("job_url")}: {job_err}', exc_info=True)
+					self.tracker.update_status(
+						job_url=job.get('job_url', ''),
+						status='failed',
+						notes=f'Application error: {str(job_err)[:200]}',
+					)
 
 				# Randomized sleep to simulate natural human activity and prevent anti-bot throttling
 				delay = random.uniform(

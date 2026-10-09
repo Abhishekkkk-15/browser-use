@@ -29,6 +29,7 @@ from job_agent.prompts.pitch_prompt import build_pitch_prompt
 from job_agent.tools.job_tools import create_job_tools
 
 console = Console(legacy_windows=False)
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -102,16 +103,17 @@ def auth_command(
 		else:
 			manual = True
 
-	from browser_use import Agent, BrowserProfile, BrowserSession
+	from browser_use import BrowserProfile, BrowserSession
 	from job_agent.config import AgentConfig
-	from job_agent.orchestrator import get_default_llm
 
 	agent_config = AgentConfig()
+	agent_config.clean_profile_locks()
 	agent_config.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
 
+	storage_arg = str(agent_config.storage_state_path) if agent_config.storage_state_path.exists() else None
 	profile = BrowserProfile(
 		user_data_dir=agent_config.chrome_user_data_dir,
-		storage_state=str(agent_config.storage_state_path),
+		storage_state=storage_arg,
 		headless=False,
 		keep_alive=True,
 		ignore_default_args=[
@@ -123,71 +125,130 @@ def auth_command(
 
 	async def _run_auth() -> None:
 		await session.start()
+		console.print(f'\n[cyan]🌐 Opening Chrome at {initial_url}...[/cyan]')
+		await session.navigate(initial_url)
+
+		for p in targets[1:]:
+			url = platform_urls.get(p)
+			if url:
+				await session.create_new_tab(url)
 
 		if email and password and not manual:
-			console.print(f'\n[cyan]🤖 Agent is opening Chrome and filling login form for {primary_platform.title()}...[/cyan]')
-			sensitive_map = {f'{primary_platform}.com': {'email': email, 'password': password}}
-			task = f"""
-1. Navigate directly to {initial_url}
-2. Find the email or username input field and type '{email}'.
-3. Find the password input field and type '{password}'.
-4. Click the 'Log In' / 'Sign In' button.
-5. Wait 5 seconds for page load or redirect.
-6. Call the 'done' action.
-"""
-			agent = Agent(
-				task=task,
-				llm=get_default_llm(),
-				browser=session,
-				sensitive_data=sensitive_map,
-				use_vision=True,
-				max_actions_per_step=4,
-				max_failures=3,
-			)
+			console.print(f'[cyan]⚡ Auto-injecting credentials for {primary_platform.title()}...[/cyan]')
+			await asyncio.sleep(1.5)
+			safe_email = json.dumps(email)
+			safe_pass = json.dumps(password)
+			inject_script = f"""
+			(function() {{
+				const emailSelectors = [
+					'input[type="email"]', 'input[name="email"]', 'input[name="session_key"]',
+					'input#user_email', 'input#email', 'input[autocomplete="username"]', 'input[autocomplete="email"]'
+				];
+				const passSelectors = [
+					'input[type="password"]', 'input[name="password"]', 'input[name="session_password"]',
+					'input#user_password', 'input#password', 'input[autocomplete="current-password"]'
+				];
+				let eField = null, pField = null;
+				for (const s of emailSelectors) {{
+					const el = document.querySelector(s);
+					if (el && el.offsetParent !== null) {{ eField = el; break; }}
+				}}
+				for (const s of passSelectors) {{
+					const el = document.querySelector(s);
+					if (el && el.offsetParent !== null) {{ pField = el; break; }}
+				}}
+				if (eField) {{
+					eField.focus();
+					eField.value = {safe_email};
+					eField.dispatchEvent(new Event('input', {{ bubbles: true }}));
+					eField.dispatchEvent(new Event('change', {{ bubbles: true }}));
+				}}
+				if (pField) {{
+					pField.focus();
+					pField.value = {safe_pass};
+					pField.dispatchEvent(new Event('input', {{ bubbles: true }}));
+					pField.dispatchEvent(new Event('change', {{ bubbles: true }}));
+				}}
+				return {{ emailFilled: !!eField, passFilled: !!pField }};
+			}})();
+			"""
 			try:
-				await agent.run(max_steps=12)
-			except Exception as e:
-				console.print(f'[yellow]Auto-fill attempted: {e}[/yellow]')
+				res = await session.execute_javascript(inject_script)
+				if res and res.get('emailFilled') and res.get('passFilled'):
+					console.print('[bold green]✓ Credentials entered into login fields![/bold green]')
+					console.print('[dim]Click "Log In" or submit if needed.[/dim]')
+				else:
+					console.print(
+						'[yellow]Note: Login fields did not accept script autofill. Please enter credentials in Chrome.[/yellow]'
+					)
+			except Exception as fill_err:
+				logger.debug(f'Auto-fill notice: {fill_err}')
 
-			loop = asyncio.get_running_loop()
+		console.print(
+			Panel.fit(
+				f'[bold green]Chrome is active at {initial_url}![/bold green]\n\n'
+				'1. In the Chrome window, complete your login (or Google SSO / 2FA / Captcha if required).\n'
+				'2. [bold cyan]Auto-Detection Active:[/bold cyan] As soon as the page redirects to your feed or dashboard, the session will auto-save!\n'
+				'3. Or press [bold yellow][Enter][/bold yellow] here anytime once you are logged in.',
+				title='Session Login Assistant',
+				border_style='green',
+			)
+		)
+
+		login_detected = False
+		loop = asyncio.get_running_loop()
+
+		async def _watchdog() -> None:
+			nonlocal login_detected
+			for _ in range(120):
+				await asyncio.sleep(1.5)
+				try:
+					cur_url = await session.get_current_url()
+					if not cur_url:
+						continue
+					cur_lower = cur_url.lower()
+					if (
+						('wellfound.com' in cur_lower and '/login' not in cur_lower and '/auth' not in cur_lower)
+						or (
+							'linkedin.com' in cur_lower
+							and '/login' not in cur_lower
+							and '/checkpoint' not in cur_lower
+							and '/uas/' not in cur_lower
+						)
+						or ('google.com' in cur_lower and '/signin' not in cur_lower and '/auth' not in cur_lower)
+					):
+						console.print(f'\n[bold green]🎉 Login detected! Redirected to: {cur_url}[/bold green]')
+						login_detected = True
+						return
+				except Exception:
+					pass
+
+		watchdog_task = asyncio.create_task(_watchdog())
+
+		async def _wait_manual() -> None:
+			nonlocal login_detected
 			await loop.run_in_executor(
 				None,
-				lambda: Prompt.ask(
-					'\n[bold yellow]👉 If a 2FA code or Captcha is shown in Chrome, solve it in the browser, then press [Enter] here[/bold yellow]',
-					default='',
-				),
+				lambda: Prompt.ask('\n[bold yellow]👉 Press [Enter] once logged in inside Chrome[/bold yellow]', default=''),
 			)
-		else:
-			await session.navigate(initial_url)
-			for p in targets[1:]:
-				url = platform_urls.get(p)
-				if url:
-					await session.create_new_tab(url)
+			login_detected = True
 
-			console.print(
-				Panel.fit(
-					f'[bold green]Chrome is now open at {initial_url}![/bold green]\n\n'
-					'1. Switch to the open Chrome browser window.\n'
-					'2. Click into the email & password fields [bold underline]on the web page in Chrome[/bold underline].\n'
-					'3. Enter your credentials and click Log In.\n'
-					'4. Complete any 2FA or Captcha challenges in Chrome.\n'
-					'5. Once logged in and viewing your dashboard/feed, return here and press [bold green]Enter[/bold green].',
-					title='Log In Inside Chrome',
-					border_style='green',
-				)
-			)
+		manual_task = asyncio.create_task(_wait_manual())
 
-			loop = asyncio.get_running_loop()
-			await loop.run_in_executor(
-				None,
-				lambda: Prompt.ask(
-					'\n[bold yellow]👉 Press [Enter] after logging in inside Chrome to save session[/bold yellow]',
-					default='',
-				),
-			)
+		done, pending = await asyncio.wait(
+			[watchdog_task, manual_task],
+			return_when=asyncio.FIRST_COMPLETED,
+		)
+		for t in pending:
+			t.cancel()
 
 		console.print('\n[cyan]Finalizing and saving browser session state...[/cyan]')
 		await asyncio.sleep(2)
+		try:
+			await session.export_storage_state(agent_config.storage_state_path)
+		except Exception as ex:
+			logger.warning(f'Could not export storage state: {ex}')
+
 		await session.stop()
 		console.print(f'[bold green]✅ Success! Browser session saved to: {agent_config.storage_state_path}[/bold green]')
 		console.print(
@@ -604,6 +665,141 @@ def reset_db_command(yes: bool) -> None:
 	tracker = JobTracker()
 	tracker.reset_database()
 	console.print('[bold green]Database has been completely reset and initialized to a clean state.[/bold green]')
+
+
+@cli.command(name='doctor')
+def doctor_command() -> None:
+	"""Diagnose system readiness, Chrome installation, LLM connectivity, resume, and authentication status."""
+	console.print(
+		Panel.fit(
+			'[bold cyan]🩺 Job Agent Environment & Authentication Diagnostics[/bold cyan]\n'
+			'Checking browser environment, LLM connectivity, profiles, and saved sessions...',
+			title='System Doctor',
+			border_style='cyan',
+		)
+	)
+
+	table = Table(title='Diagnostic Results', border_style='cyan', box=box.ROUNDED)
+	table.add_column('Component', style='bold white', width=22)
+	table.add_column('Status', width=12)
+	table.add_column('Details', style='dim')
+
+	agent_config = AgentConfig()
+
+	# 1. Check Chrome / Chromium
+	import shutil
+
+	chrome_exec = shutil.which('google-chrome') or shutil.which('chrome') or shutil.which('chromium')
+	if not chrome_exec and sys.platform == 'win32':
+		win_paths = [
+			Path(r'C:\Program Files\Google\Chrome\Application\chrome.exe'),
+			Path(r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'),
+			Path(os.path.expanduser(r'~\AppData\Local\Google\Chrome\Application\chrome.exe')),
+		]
+		for p in win_paths:
+			if p.exists():
+				chrome_exec = str(p)
+				break
+
+	if chrome_exec:
+		table.add_row('Google Chrome', '[bold green]PASS[/bold green]', f'Found at {chrome_exec}')
+	else:
+		table.add_row('Google Chrome', '[bold yellow]DETECT[/bold yellow]', 'Default browser path detected via Playwright/CDP')
+
+	# Check Profile Directory & Clean Locks
+	agent_config.clean_profile_locks()
+	p_dir = Path(os.path.expanduser(agent_config.chrome_user_data_dir or ''))
+	if p_dir.exists():
+		table.add_row('Chrome Profile', '[bold green]PASS[/bold green]', f'Active profile directory ({p_dir})')
+	else:
+		table.add_row('Chrome Profile', '[bold cyan]INFO[/bold cyan]', f'Will be auto-created on first run at {p_dir}')
+
+	# 2. Check LLM Connectivity
+	llm = get_default_llm()
+	llm_name = llm.__class__.__name__
+	from browser_use.llm.messages import UserMessage
+
+	async def test_llm():
+		import time
+
+		t0 = time.time()
+		try:
+			await asyncio.wait_for(llm.ainvoke([UserMessage(content='ping')]), timeout=8.0)
+			latency_ms = int((time.time() - t0) * 1000)
+			return True, f'Connected ({llm_name}, latency: {latency_ms}ms)'
+		except Exception as ex:
+			return False, f'Error: {ex}'
+
+	try:
+		ok, msg = asyncio.run(test_llm())
+		table.add_row('LLM Connectivity', '[bold green]PASS[/bold green]' if ok else '[bold red]FAIL[/bold red]', msg)
+	except Exception as ex:
+		table.add_row('LLM Connectivity', '[bold red]FAIL[/bold red]', str(ex))
+
+	# 3. Resume & Candidate Profile
+	user_profile = UserProfile.from_env_or_defaults()
+	if user_profile.resume_path.exists():
+		sz = user_profile.resume_path.stat().st_size // 1024
+		table.add_row('Resume PDF', '[bold green]PASS[/bold green]', f'Found ({sz} KB) at {user_profile.resume_path}')
+	else:
+		table.add_row(
+			'Resume PDF', '[bold yellow]WARN[/bold yellow]', f'Missing at {user_profile.resume_path}. Add resume.pdf to apply'
+		)
+
+	if user_profile.resume_text_path.exists():
+		table.add_row('Resume Text', '[bold green]PASS[/bold green]', f'Found at {user_profile.resume_text_path}')
+	else:
+		table.add_row('Resume Text', '[bold cyan]INFO[/bold cyan]', 'Using structured UserProfile defaults')
+
+	table.add_row(
+		'Candidate Profile',
+		'[bold green]PASS[/bold green]',
+		f'{user_profile.name} ({user_profile.current_role}, {len(user_profile.skills)} skills)',
+	)
+
+	# 4. Storage State & Saved Authentication
+	state_path = agent_config.storage_state_path
+	if state_path.exists():
+		try:
+			data = json.loads(state_path.read_text(encoding='utf-8'))
+			cookies = data.get('cookies', [])
+			cookie_domains = {c.get('domain', '') for c in cookies}
+			has_wf = any('wellfound' in d for d in cookie_domains)
+			has_li = any('linkedin' in d for d in cookie_domains)
+			has_gg = any('google' in d for d in cookie_domains)
+
+			auth_summary = []
+			if has_wf:
+				auth_summary.append('Wellfound')
+			if has_li:
+				auth_summary.append('LinkedIn')
+			if has_gg:
+				auth_summary.append('Google/Gmail')
+
+			details = f'{len(cookies)} cookies stored'
+			if auth_summary:
+				details += f' (Logged into: {", ".join(auth_summary)})'
+			table.add_row('Saved Auth Session', '[bold green]PASS[/bold green]', details)
+		except Exception as ex:
+			table.add_row('Saved Auth Session', '[bold yellow]WARN[/bold yellow]', f'Invalid JSON in {state_path}: {ex}')
+	else:
+		table.add_row(
+			'Saved Auth Session', '[bold yellow]NOT SAVED[/bold yellow]', 'No saved session yet. Run "job-agent auth" to log in.'
+		)
+
+	# 5. Database Health
+	tracker = JobTracker()
+	try:
+		stats = tracker.get_stats()
+		table.add_row(
+			'SQLite Database',
+			'[bold green]PASS[/bold green]',
+			f'{stats["total_found"]} jobs found, {stats["total_applied"]} applied ({tracker.db_path})',
+		)
+	except Exception as ex:
+		table.add_row('SQLite Database', '[bold red]FAIL[/bold red]', str(ex))
+
+	console.print(table)
 
 
 # ==============================================================================

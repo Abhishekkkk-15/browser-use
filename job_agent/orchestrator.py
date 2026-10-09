@@ -119,26 +119,67 @@ class JobAgentOrchestrator:
 		logger.info(f'Mode: {self.preferences.mode.upper()} | Dry Run: {self.preferences.dry_run}')
 		logger.info('=' * 60)
 
-		# Phase 1: Search across platforms
-		logger.info('\n--- PHASE 1: DISCOVERY & SEARCH ---')
-		search_counts = await self.search_agent.run_all()
+		from browser_use import BrowserProfile, BrowserSession
 
-		# Phase 2: Recruiter intelligence extraction
-		logger.info('\n--- PHASE 2: RECRUITER INTELLIGENCE EXTRACTION ---')
-		extracted_count = await self.extractor_agent.run_batch(limit=10)
+		# Clean profile locks before startup to eliminate SingletonLock collisions
+		self.agent_config.clean_profile_locks()
 
-		# Phase 3: Applications
-		logger.info('\n--- PHASE 3: SUBMITTING APPLICATIONS (BEST-FIT RANKED) ---')
-		applied_count = await self.application_agent.run_batch(max_applications=self.preferences.max_applications_per_run)
+		storage_arg = str(self.agent_config.storage_state_path) if self.agent_config.storage_state_path.exists() else None
+		profile = BrowserProfile(
+			user_data_dir=self.agent_config.chrome_user_data_dir,
+			storage_state=storage_arg,
+			cdp_url=self.agent_config.cdp_url,
+			headless=self.agent_config.headless,
+			demo_mode=self.agent_config.demo_mode,
+			keep_alive=True,
+			ignore_default_args=[
+				'--disable-window-activation',
+				'--disable-focus-on-load',
+			],
+		)
+		shared_session = BrowserSession(browser_profile=profile)
+		await shared_session.start()
 
-		# Phase 4: Cold emails (if enabled)
-		email_count = 0
-		if self.preferences.auto_cold_email:
-			logger.info('\n--- PHASE 4: COLD OUTREACH CAMPAIGN (BROWSER-NATIVE) ---')
-			if self.preferences.use_browser_email:
-				email_count = await self.browser_email_agent.run_campaign(limit=5)
-			else:
-				email_count = await self.email_agent.run_campaign(limit=5)
+		# Share single persistent browser session across all agents
+		self.search_agent.browser_session = shared_session
+		self.extractor_agent.browser_session = shared_session
+		self.application_agent.browser_session = shared_session
+		self.browser_email_agent.browser_session = shared_session
+
+		try:
+			# Phase 1: Search across platforms
+			logger.info('\n--- PHASE 1: DISCOVERY & SEARCH ---')
+			search_counts = await self.search_agent.run_all()
+
+			# Phase 2: Recruiter intelligence extraction
+			logger.info('\n--- PHASE 2: RECRUITER INTELLIGENCE EXTRACTION ---')
+			extracted_count = await self.extractor_agent.run_batch(limit=10)
+
+			# Phase 3: Applications
+			logger.info('\n--- PHASE 3: SUBMITTING APPLICATIONS (BEST-FIT RANKED) ---')
+			applied_count = await self.application_agent.run_batch(max_applications=self.preferences.max_applications_per_run)
+
+			# Phase 4: Cold emails (if enabled)
+			email_count = 0
+			if self.preferences.auto_cold_email:
+				logger.info('\n--- PHASE 4: COLD OUTREACH CAMPAIGN (BROWSER-NATIVE) ---')
+				if self.preferences.use_browser_email:
+					email_count = await self.browser_email_agent.run_campaign(limit=5)
+				else:
+					email_count = await self.email_agent.run_campaign(limit=5)
+
+		finally:
+			try:
+				if self.agent_config.storage_state_path:
+					await shared_session.export_storage_state(self.agent_config.storage_state_path)
+			except Exception as save_err:
+				logger.debug(f'Storage state sync notice: {save_err}')
+
+			await shared_session.stop()
+			self.search_agent.browser_session = None
+			self.extractor_agent.browser_session = None
+			self.application_agent.browser_session = None
+			self.browser_email_agent.browser_session = None
 
 		stats = self.tracker.get_stats()
 		logger.info('\n' + '=' * 60)

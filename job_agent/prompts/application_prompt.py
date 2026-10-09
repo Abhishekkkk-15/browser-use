@@ -68,21 +68,30 @@ PITCH / COVER NOTE TO PASTE IF REQUESTED:
 STEP-BY-STEP EXECUTION INSTRUCTIONS:
 1. Navigate directly to {job_url}
 2. Find and click the 'Easy Apply' (or 'Apply Now') button.
-3. If an application modal or multi-step form appears:
-   a. Step through each page carefully.
-   b. Fill in contact info (Phone, Email, Location) using candidate info.
-   c. If resume upload is requested: select the uploaded resume file from the available file paths.
-   d. If screening questions appear:
-      - Years of experience: enter {user.years_of_experience} or select closest option.
+3. If an application modal or multi-step form appears, execute the SMART FORM SOLVER:
+   a. PRE-FLIGHT STEP SCAN:
+      - Fill all text inputs: Name, Email, Phone, Location from candidate profile.
+      - If a resume upload field appears: attach the available resume file.
+   b. SCREENING QUESTIONS RESOLUTION:
+      - Years of experience: enter {user.years_of_experience} (or 2-3 if specific skill is mentioned).
       - Are you legally authorized to work?: Select Yes.
-      - Will you now or in the future require sponsorship?: Select No (or per candidate authorization: {user.work_authorization}).
-      - Notice period: enter {user.notice_period_days}.
-      - Expected compensation / CTC: enter {user.expected_salary_annual}.
-      - Why do you want to work here / Cover letter: paste the provided pitch note.
-   e. Click 'Next' or 'Continue' to advance through each step.
+      - Will you require visa sponsorship?: Select No (or per profile: {user.work_authorization}).
+      - Notice period / Availability: enter {user.notice_period_days} days.
+      - Desired salary / compensation: enter {user.expected_salary_annual}.
+      - Radio buttons / dropdowns: select the affirmative or best matching option (e.g. "Yes", "Fluent", "Comfortable", or degree matching {user.education}).
+      - Why do you want to work here / Cover note: paste the provided pitch note.
+   c. STUCK-STEP / DISABLED BUTTON RECOVERY:
+      - If 'Next', 'Continue', or 'Review' is disabled or unclickable:
+        * DO NOT keep clicking a disabled button!
+        * Scan the current screen for red error messages, unfilled required fields (*), or unselected radio buttons.
+        * Complete the missing input, then click 'Next'.
+   d. Advance through each step until reaching the final review page.
 4. When you reach the final review page:
    {submit_instruction}
-5. If at any point the application cannot proceed (e.g. requires external website login or third-party redirect),
-   call mark_applied(job_url='{job_url}', status='failed', notes='External redirect required') and finish.
-6. Once completed, finish with the done action.
+5. SUBMISSION VERIFICATION:
+   - Verify that the confirmation modal ("Application submitted", "Your application was sent") appears.
+   - If successfully submitted or dry-run confirmed, call mark_applied(job_url='{job_url}', status='applied').
+6. If at any point the application cannot proceed (e.g. requires external ATS redirect like Workday/Greenhouse without Easy Apply, or blocked captcha):
+   call mark_applied(job_url='{job_url}', status='failed', notes='External redirect or manual verification required') and finish.
+7. Once completed, finish with the done action.
 """

@@ -131,11 +131,12 @@ def create_job_tools(
 				include_extracted_content_only_once=True,
 			)
 
-		# Normalize job URL to prevent search URL collisions
+		# Normalize and canonicalize job URL to prevent duplicates and tracking query collisions
+		import re
+		import urllib.parse
+
 		cleaned_url = params.job_url.strip()
 		if 'linkedin.com' in cleaned_url or params.platform == 'linkedin':
-			import re
-
 			match_id = re.search(r'currentJobId=(\d+)', cleaned_url)
 			if match_id:
 				cleaned_url = f'https://www.linkedin.com/jobs/view/{match_id.group(1)}/'
@@ -148,6 +149,17 @@ def create_job_tools(
 
 				slug = hashlib.md5(f'{params.company_name}_{params.job_title}'.encode('utf-8')).hexdigest()[:10]
 				cleaned_url = f'https://www.linkedin.com/jobs/view/li-{slug}/'
+		else:
+			parsed = urllib.parse.urlparse(cleaned_url)
+			if parsed.query:
+				q_pairs = urllib.parse.parse_qsl(parsed.query)
+				filtered = [
+					(k, v) for k, v in q_pairs if not k.lower().startswith(('utm_', 'trk', 'tracking', 'ref', 'source', 'origin'))
+				]
+				new_query = urllib.parse.urlencode(filtered)
+				cleaned_url = urllib.parse.urlunparse(parsed._replace(query=new_query))
+
+		cleaned_url = cleaned_url.rstrip('/')
 
 		# Normalize application type
 		app_type = params.application_type.lower()
@@ -183,7 +195,7 @@ def create_job_tools(
 		return ActionResult(
 			extracted_content=(
 				f"Saved job #{job_id}: '{params.job_title}' at '{params.company_name}' (Fit: {match_score:.0f}%, {fit_result.reasoning}). "
-				f'Total jobs in tracker: {stats["total_found"]}. Inspect more postings and save at least 5 jobs before concluding.'
+				f'Total matching jobs in tracker: {stats["total_found"]}. Continue inspecting and cataloging high-relevance positions.'
 			),
 			include_extracted_content_only_once=True,
 		)
