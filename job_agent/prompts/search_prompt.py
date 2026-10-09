@@ -14,7 +14,9 @@ def build_linkedin_search_prompt(user: UserProfile, prefs: JobPreferences) -> st
 	encoded_loc = urllib.parse.quote(location)
 	exp_param = prefs.get_linkedin_experience_param(user.years_of_experience)
 	# Direct pre-filtered URL with f_AL=true (Easy Apply) and experience parameter
-	direct_search_url = f'https://www.linkedin.com/jobs/search/?keywords={encoded_role}&location={encoded_loc}&f_AL=true{exp_param}'
+	direct_search_url = (
+		f'https://www.linkedin.com/jobs/search/?keywords={encoded_role}&location={encoded_loc}&f_AL=true{exp_param}'
+	)
 
 	return f"""
 You are an autonomous AI recruiter assistant searching LinkedIn for high-match jobs.

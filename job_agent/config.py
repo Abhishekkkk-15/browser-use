@@ -10,6 +10,11 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent / 'data'
+DEFAULT_PROFILE_JSON = DEFAULT_DATA_DIR / 'user_profile.json'
+DEFAULT_PREFERENCES_JSON = DEFAULT_DATA_DIR / 'job_preferences.json'
+
+
 class UserProfile(BaseModel):
 	"""Comprehensive user professional profile for form filling and pitch generation."""
 
@@ -21,11 +26,11 @@ class UserProfile(BaseModel):
 	github_url: str | None = Field(default=None, description='GitHub profile URL')
 	portfolio_url: str | None = Field(default=None, description='Portfolio or personal website URL')
 	resume_path: Path = Field(
-		default=Path('job_agent/data/resume.pdf'),
+		default=DEFAULT_DATA_DIR / 'resume.pdf',
 		description='Path to resume PDF file to upload in applications',
 	)
 	resume_text_path: Path = Field(
-		default=Path('job_agent/data/resume.txt'),
+		default=DEFAULT_DATA_DIR / 'resume.txt',
 		description='Path to plain text resume for LLM context',
 	)
 	years_of_experience: float = Field(default=1.0, description='Total years of professional experience')
@@ -59,14 +64,77 @@ class UserProfile(BaseModel):
 	notice_period_days: int = Field(default=15, description='Notice period in days')
 	expected_salary_annual: str = Field(default='Competitive / Market standard', description='Salary expectations')
 
+	def save_to_file(self, target_path: Path | str | None = None) -> Path:
+		"""Save candidate profile to a JSON file."""
+		import json
+
+		p = Path(target_path) if target_path else DEFAULT_PROFILE_JSON
+		p.parent.mkdir(parents=True, exist_ok=True)
+		data = self.model_dump()
+		data['resume_path'] = str(data['resume_path'])
+		data['resume_text_path'] = str(data['resume_text_path'])
+		p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+		return p
+
 	@classmethod
-	def from_env_or_defaults(cls) -> UserProfile:
-		"""Construct user profile from environment variables or sensible defaults."""
+	def from_file(cls, path: Path | str) -> UserProfile:
+		"""Load candidate profile from a JSON file."""
+		import json
+
+		p = Path(path)
+		if not p.exists():
+			raise FileNotFoundError(f'Profile file not found at {p}')
+		data = json.loads(p.read_text(encoding='utf-8'))
+		if 'resume_path' in data:
+			data['resume_path'] = Path(data['resume_path'])
+		if 'resume_text_path' in data:
+			data['resume_text_path'] = Path(data['resume_text_path'])
+		return cls(**data)
+
+	@classmethod
+	def from_env_or_defaults(cls, auto_parse_resume: bool = True) -> UserProfile:
+		"""Construct user profile with precedence:
+		1. Saved JSON profile (user_profile.json)
+		2. Auto-parsed from user resume (resume.pdf / resume.txt) if present
+		3. Environment variables (.env)
+		4. Sensible defaults
+		"""
+		import logging
+
+		logger = logging.getLogger(__name__)
+
+		# 1. Saved JSON file
+		if DEFAULT_PROFILE_JSON.exists():
+			try:
+				return cls.from_file(DEFAULT_PROFILE_JSON)
+			except Exception as e:
+				logger.warning(f'Failed to load saved profile from {DEFAULT_PROFILE_JSON}: {e}')
+
+		# 2. Check if resume exists and auto-parse if requested
+		resume_p = Path(os.getenv('USER_RESUME_PATH', str(DEFAULT_DATA_DIR / 'resume.pdf')))
+		resume_txt_p = Path(os.getenv('USER_RESUME_TEXT_PATH', str(DEFAULT_DATA_DIR / 'resume.txt')))
+
+		if auto_parse_resume and (resume_p.exists() or resume_txt_p.exists()):
+			target_resume = resume_p if resume_p.exists() else resume_txt_p
+			try:
+				from job_agent.services.resume_parser import ResumeParser
+
+				parsed = ResumeParser.parse(target_resume, use_llm=False)
+				parsed['resume_path'] = resume_p
+				parsed['resume_text_path'] = resume_txt_p
+				profile = cls(**parsed)
+				# Auto-persist so subsequent runs don't need to reparse
+				try:
+					profile.save_to_file(DEFAULT_PROFILE_JSON)
+				except Exception:
+					pass
+				return profile
+			except Exception as ex:
+				logger.warning(f'Auto-parsing resume failed: {ex}')
+
+		# 3. Environment variables or defaults
 		skills_str = os.getenv('USER_SKILLS', '')
 		skills = [s.strip() for s in skills_str.split(',') if s.strip()] if skills_str else None
-
-		resume_p = Path(os.getenv('USER_RESUME_PATH', 'job_agent/data/resume.pdf'))
-		resume_txt_p = Path(os.getenv('USER_RESUME_TEXT_PATH', 'job_agent/data/resume.txt'))
 
 		kwargs: dict[str, Any] = {}
 		if os.getenv('USER_NAME'):
@@ -147,6 +215,7 @@ class JobPreferences(BaseModel):
 			return '&f_E=3,4'  # Associate, Mid-Senior
 		else:
 			return '&f_E=4,5'  # Mid-Senior, Director
+
 	platforms: list[Literal['linkedin', 'wellfound', 'naukri']] = Field(
 		default_factory=lambda: ['linkedin', 'wellfound', 'naukri'],
 		description='Job platforms to search and apply on',
@@ -188,6 +257,35 @@ class JobPreferences(BaseModel):
 		default=True,
 		description='Send cold outreach directly through browser webmail (Gmail) without requiring SMTP credentials',
 	)
+
+	def save_to_file(self, target_path: Path | str | None = None) -> Path:
+		"""Save preferences to a JSON file."""
+		p = Path(target_path) if target_path else DEFAULT_PREFERENCES_JSON
+		p.parent.mkdir(parents=True, exist_ok=True)
+		p.write_text(self.model_dump_json(indent=2), encoding='utf-8')
+		return p
+
+	@classmethod
+	def from_file(cls, path: Path | str) -> JobPreferences:
+		"""Load preferences from a JSON file."""
+		p = Path(path)
+		if not p.exists():
+			raise FileNotFoundError(f'Preferences file not found at {p}')
+		return cls.model_validate_json(p.read_text(encoding='utf-8'))
+
+	@classmethod
+	def from_env_or_defaults(cls) -> JobPreferences:
+		"""Load preferences from JSON file if present, else sensible defaults."""
+		import logging
+
+		logger = logging.getLogger(__name__)
+
+		if DEFAULT_PREFERENCES_JSON.exists():
+			try:
+				return cls.from_file(DEFAULT_PREFERENCES_JSON)
+			except Exception as e:
+				logger.warning(f'Failed to load preferences from {DEFAULT_PREFERENCES_JSON}: {e}')
+		return cls()
 
 
 class JobRecord(BaseModel):

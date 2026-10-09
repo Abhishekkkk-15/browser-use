@@ -61,7 +61,7 @@ class JobAgentOrchestrator:
 		llm: BaseChatModel | None = None,
 	):
 		self.user_profile = user_profile or UserProfile.from_env_or_defaults()
-		self.preferences = preferences or JobPreferences()
+		self.preferences = preferences or JobPreferences.from_env_or_defaults()
 		self.agent_config = agent_config or AgentConfig()
 		self.tracker = JobTracker(self.agent_config.database_path)
 		self.llm = llm or get_default_llm()

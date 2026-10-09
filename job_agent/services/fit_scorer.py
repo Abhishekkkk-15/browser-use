@@ -126,7 +126,7 @@ class JobFitScorer:
 			)
 
 		# Check explicit years requirement in description or title
-		full_text_for_exp = f"{description} {job.get('experience_required', '')} {title}".lower()
+		full_text_for_exp = f'{description} {job.get("experience_required", "")} {title}'.lower()
 		exp_match = re.search(r'(\d+(?:\.\d+)?)\+?\s*(?:to\s*(\d+(?:\.\d+)?))?\s*(?:years|yrs)', full_text_for_exp)
 		min_req = None
 		if exp_match:

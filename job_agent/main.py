@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -22,7 +23,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from job_agent.config import AgentConfig, JobPreferences, UserProfile
+from job_agent.config import (
+	DEFAULT_DATA_DIR,
+	DEFAULT_PROFILE_JSON,
+	AgentConfig,
+	JobPreferences,
+	UserProfile,
+)
 from job_agent.database import JobTracker
 from job_agent.orchestrator import JobAgentOrchestrator, get_default_llm
 from job_agent.prompts.pitch_prompt import build_pitch_prompt
@@ -758,10 +765,11 @@ def doctor_command() -> None:
 	else:
 		table.add_row('Resume Text', '[bold cyan]INFO[/bold cyan]', 'Using structured UserProfile defaults')
 
+	profile_src = 'user_profile.json' if DEFAULT_PROFILE_JSON.exists() else 'Auto-parsed / Env'
 	table.add_row(
 		'Candidate Profile',
 		'[bold green]PASS[/bold green]',
-		f'{user_profile.name} ({user_profile.current_role}, {len(user_profile.skills)} skills)',
+		f'{user_profile.name} ({user_profile.current_role}, {user_profile.years_of_experience:.1f} yrs exp, src: {profile_src})',
 	)
 
 	# 4. Storage State & Saved Authentication
@@ -1015,6 +1023,7 @@ def profile_group() -> None:
 def profile_show_command() -> None:
 	"""Display candidate profile information, skills, and resume paths."""
 	user = UserProfile.from_env_or_defaults()
+	source_label = f'Saved JSON ({DEFAULT_PROFILE_JSON})' if DEFAULT_PROFILE_JSON.exists() else 'Auto-parsed / Env'
 
 	profile_text = (
 		f'[bold white]Name:[/bold white] {user.name}\n'
@@ -1028,6 +1037,7 @@ def profile_show_command() -> None:
 		f'[bold white]GitHub:[/bold white] {user.github_url or "None"}\n'
 		f'[bold white]Portfolio:[/bold white] {user.portfolio_url or "None"}\n'
 		f'[bold white]Education:[/bold white] {user.education}\n'
+		f'[bold white]Profile Source:[/bold white] [green]{source_label}[/green]\n'
 		f'[bold white]Resume PDF:[/bold white] {user.resume_path} ({"[green]Found[/green]" if user.resume_path.exists() else "[red]Missing[/red]"})\n'
 		f'[bold white]Resume Text:[/bold white] {user.resume_text_path} ({"[green]Found[/green]" if user.resume_text_path.exists() else "[red]Missing[/red]"})\n\n'
 		f'[bold yellow]Core Skills ({len(user.skills)}):[/bold yellow]\n{", ".join(user.skills)}\n\n'
@@ -1035,6 +1045,261 @@ def profile_show_command() -> None:
 	)
 
 	console.print(Panel(profile_text, title='Candidate Active Profile', border_style='cyan'))
+
+
+def run_interactive_setup(
+	resume: str | None = None,
+	auto: bool = False,
+	clean: bool = False,
+) -> None:
+	"""Interactive candidate onboarding wizard."""
+	console.print(
+		Panel.fit(
+			'[bold cyan]🛠️  Job Agent Interactive Profile Setup Wizard[/bold cyan]\n'
+			'Interactively configure your candidate profile and job preferences.\n'
+			'[dim]All details are saved locally in data/user_profile.json — no personal info needed in .env![/dim]',
+			title='Candidate Setup',
+			border_style='cyan',
+		)
+	)
+
+	target_resume: Path | None = None
+	if resume:
+		p = Path(resume)
+		if p.exists():
+			target_resume = p
+		else:
+			console.print(f'[bold red]Error:[/bold red] Resume file not found at {p}')
+			if not click.confirm('Continue without parsing resume?', default=True):
+				return
+	elif not clean:
+		for candidate in [
+			DEFAULT_DATA_DIR / 'resume.txt',
+			DEFAULT_DATA_DIR / 'resume.pdf',
+			Path('job_agent/data/resume.txt'),
+			Path('job_agent/data/resume.pdf'),
+		]:
+			if candidate.exists():
+				target_resume = candidate
+				break
+
+	current_profile = UserProfile.from_env_or_defaults() if (DEFAULT_PROFILE_JSON.exists() and not clean) else UserProfile()
+
+	extracted_data: dict[str, Any] = {}
+	if target_resume and target_resume.exists() and not clean:
+		console.print(f'\n[bold cyan]📄 Resume Found:[/bold cyan] {target_resume}')
+		with console.status('[bold green]Parsing resume and calculating experience years...[/bold green]'):
+			try:
+				from job_agent.services.resume_parser import ResumeParser
+
+				extracted_data = ResumeParser.parse(target_resume, use_llm=True)
+				console.print(
+					f'[bold green]✓ Successfully parsed resume![/bold green] '
+					f'Name: [bold white]{extracted_data.get("name")}[/bold white], '
+					f'Experience: [bold cyan]{extracted_data.get("years_of_experience")} years[/bold cyan], '
+					f'Role: [bold white]{extracted_data.get("current_role")}[/bold white]'
+				)
+			except Exception as e:
+				console.print(f'[yellow]⚠️ Resume auto-parsing encountered an issue: {e}[/yellow]')
+
+	def get_val(key: str, default: Any) -> Any:
+		if key in extracted_data and extracted_data[key]:
+			return extracted_data[key]
+		curr = getattr(current_profile, key, None)
+		if curr:
+			return curr
+		return default
+
+	if auto:
+		name = get_val('name', 'Abhishek Jangid')
+		role = get_val('current_role', 'Full Stack Developer')
+		company = get_val('current_company', None)
+		exp = float(get_val('years_of_experience', 0.7))
+		email = get_val('email', 'abhishekjangid3489@gmail.com')
+		phone = get_val('phone', '+919799219379')
+		loc = get_val('location', 'Remote')
+		linkedin = get_val('linkedin_url', 'https://www.linkedin.com/in/candidate')
+		github = get_val('github_url', None)
+		portfolio = get_val('portfolio_url', None)
+		skills = get_val('skills', ['TypeScript', 'Python', 'React', 'FastAPI'])
+		summary = get_val('summary', 'Software engineer specializing in AI agents and web automation.')
+		education = get_val('education', 'Computer Science')
+
+		profile = UserProfile(
+			name=name,
+			current_role=role,
+			current_company=company,
+			years_of_experience=exp,
+			email=email,
+			phone=phone,
+			location=loc,
+			linkedin_url=linkedin,
+			github_url=github,
+			portfolio_url=portfolio,
+			skills=skills,
+			summary=summary,
+			education=education,
+			resume_path=target_resume
+			if target_resume and target_resume.suffix.lower() == '.pdf'
+			else current_profile.resume_path,
+			resume_text_path=target_resume
+			if target_resume and target_resume.suffix.lower() != '.pdf'
+			else current_profile.resume_text_path,
+		)
+		saved_p = profile.save_to_file()
+		console.print(f'\n[bold green]✓ Auto-saved candidate profile to {saved_p}![/bold green]')
+		return
+
+	console.print('\n[bold yellow]Step 1: Candidate Professional Details[/bold yellow]')
+	console.print('[dim]Press Enter to accept the value in brackets, or type to edit:[/dim]\n')
+
+	name = click.prompt('Full Name', default=get_val('name', 'Abhishek Jangid'), type=str)
+	current_role = click.prompt('Current Role / Title', default=get_val('current_role', 'Full Stack Developer'), type=str)
+	raw_company = click.prompt('Current Employer / Company', default=str(get_val('current_company', 'None') or 'None'), type=str)
+	current_company = None if raw_company.strip().lower() in ('none', 'n/a', '') else raw_company.strip()
+
+	years_of_exp_raw = click.prompt(
+		'Total Experience in Years (e.g. 0.5, 0.7, 1.0, 2.0)',
+		default=float(get_val('years_of_experience', 0.7)),
+		type=float,
+	)
+	years_of_exp = max(0.0, float(years_of_exp_raw))
+
+	email = click.prompt('Primary Email', default=get_val('email', 'abhishekjangid3489@gmail.com'), type=str)
+	phone = click.prompt('Phone Number', default=get_val('phone', '+919799219379'), type=str)
+	location = click.prompt('Location / City', default=get_val('location', 'Jodhpur, Rajasthan, India'), type=str)
+
+	linkedin_url = click.prompt(
+		'LinkedIn Profile URL', default=get_val('linkedin_url', 'https://www.linkedin.com/in/abhishek-jangid-3532b1323'), type=str
+	)
+	raw_github = click.prompt(
+		'GitHub Profile URL', default=str(get_val('github_url', 'https://github.com/abhishekkkk-15') or 'None'), type=str
+	)
+	github_url = None if raw_github.strip().lower() in ('none', 'n/a', '') else raw_github.strip()
+
+	raw_port = click.prompt(
+		'Portfolio / Project URL', default=str(get_val('portfolio_url', 'https://cloud-agent.abhishekkkk.in') or 'None'), type=str
+	)
+	portfolio_url = None if raw_port.strip().lower() in ('none', 'n/a', '') else raw_port.strip()
+
+	education = click.prompt('Education', default=get_val('education', 'Master of Computer Applications (MCA)'), type=str)
+
+	curr_skills = get_val('skills', ['TypeScript', 'Python', 'React', 'FastAPI', 'Node.js', 'PostgreSQL', 'Docker', 'AI Agents'])
+	skills_default = ', '.join(curr_skills) if isinstance(curr_skills, list) else str(curr_skills)
+	skills_input = click.prompt('Core Skills (comma-separated)', default=skills_default, type=str)
+	skills = [s.strip() for s in skills_input.split(',') if s.strip()]
+
+	summary = click.prompt(
+		'Professional Summary / Pitch',
+		default=get_val(
+			'summary',
+			'Applied AI Engineer specializing in autonomous coding agents, backend systems, and modern web applications.',
+		),
+		type=str,
+	)
+
+	console.print('\n[bold yellow]Step 2: Job Preferences & Autopilot Settings[/bold yellow]\n')
+	pref = JobPreferences.from_env_or_defaults()
+
+	roles_input = click.prompt('Target Roles (comma-separated)', default=', '.join(pref.target_roles), type=str)
+	target_roles = [r.strip() for r in roles_input.split(',') if r.strip()]
+
+	locs_input = click.prompt('Target Locations (comma-separated)', default=', '.join(pref.target_locations), type=str)
+	target_locations = [loc.strip() for loc in locs_input.split(',') if loc.strip()]
+
+	platforms_input = click.prompt(
+		'Target Platforms (comma-separated: wellfound, linkedin, naukri)', default=', '.join(pref.platforms), type=str
+	)
+	target_platforms = [
+		p.strip().lower() for p in platforms_input.split(',') if p.strip().lower() in ('wellfound', 'linkedin', 'naukri')
+	]
+	if not target_platforms:
+		target_platforms = ['wellfound', 'linkedin', 'naukri']
+
+	mode = click.prompt(
+		'Operating Mode (ask = confirm before submit; free = autonomous autopilot)',
+		default=pref.mode,
+		type=click.Choice(['ask', 'free']),
+	)
+	max_apps = click.prompt('Max Applications Per Run', default=pref.max_applications_per_run, type=int)
+	min_fit = click.prompt('Minimum Fit Score % (strict relevance threshold)', default=pref.min_fit_score, type=float)
+
+	profile = UserProfile(
+		name=name,
+		current_role=current_role,
+		current_company=current_company,
+		years_of_experience=years_of_exp,
+		email=email,
+		phone=phone,
+		location=location,
+		linkedin_url=linkedin_url,
+		github_url=github_url,
+		portfolio_url=portfolio_url,
+		skills=skills,
+		summary=summary,
+		education=education,
+		resume_path=target_resume if target_resume and target_resume.suffix.lower() == '.pdf' else current_profile.resume_path,
+		resume_text_path=target_resume
+		if target_resume and target_resume.suffix.lower() != '.pdf'
+		else current_profile.resume_text_path,
+	)
+
+	preferences = JobPreferences(
+		target_roles=target_roles,
+		target_locations=target_locations,
+		platforms=target_platforms,
+		mode=mode,
+		max_applications_per_run=max_apps,
+		min_fit_score=min_fit,
+		experience_level='entry_level' if years_of_exp <= 1.5 else ('associate' if years_of_exp <= 3.5 else 'mid_senior'),
+	)
+
+	profile_path = profile.save_to_file()
+	pref_path = preferences.save_to_file()
+
+	summary_card = (
+		f'[bold white]Candidate:[/bold white] {profile.name} ([cyan]{profile.current_role}[/cyan])\n'
+		f'[bold white]Experience:[/bold white] [bold cyan]{profile.years_of_experience:.1f} years[/bold cyan]\n'
+		f'[bold white]Company:[/bold white] {profile.current_company or "None"}\n'
+		f'[bold white]Contact:[/bold white] {profile.email} | {profile.phone}\n'
+		f'[bold white]Location:[/bold white] {profile.location}\n'
+		f'[bold white]LinkedIn:[/bold white] {profile.linkedin_url}\n'
+		f'[bold white]Skills ({len(profile.skills)}):[/bold white] {", ".join(profile.skills[:8])}...\n\n'
+		f'[bold yellow]Target Roles:[/bold yellow] {", ".join(preferences.target_roles)}\n'
+		f'[bold yellow]Target Locations:[/bold yellow] {", ".join(preferences.target_locations)}\n'
+		f'[bold yellow]Platforms:[/bold yellow] {", ".join(preferences.platforms)}\n'
+		f'[bold yellow]Mode:[/bold yellow] {preferences.mode.upper()} | [bold yellow]Min Fit Score:[/bold yellow] {preferences.min_fit_score}%\n\n'
+		f'[bold green]Saved Local Files:[/bold green]\n'
+		f'  ✓ Candidate Profile: {profile_path}\n'
+		f'  ✓ Preferences: {pref_path}'
+	)
+
+	console.print('\n')
+	console.print(Panel(summary_card, title='🎉 Setup Completed Successfully', border_style='green'))
+	console.print(
+		'[bold green]✓ Done![/bold green] Your details are saved locally. You do NOT need to keep personal information in .env.'
+	)
+	console.print(
+		'Run [bold cyan]uv run job-agent doctor[/bold cyan] to verify system health or [bold cyan]uv run job-agent auto --dry-run[/bold cyan] to test applications.\n'
+	)
+
+
+@cli.command(name='setup')
+@click.option('--resume', default=None, help='Path to resume file (PDF or TXT) to auto-extract details from')
+@click.option('--auto', is_flag=True, help='Auto-save extracted resume details without interactive prompts')
+@click.option('--clean', is_flag=True, help='Start with clean empty fields instead of prefilling existing profile')
+def setup_cli_command(resume: str | None, auto: bool, clean: bool) -> None:
+	"""Interactively configure candidate profile and job preferences without editing .env."""
+	run_interactive_setup(resume=resume, auto=auto, clean=clean)
+
+
+@profile_group.command(name='setup')
+@click.option('--resume', default=None, help='Path to resume file (PDF or TXT) to auto-extract details from')
+@click.option('--auto', is_flag=True, help='Auto-save extracted resume details without interactive prompts')
+@click.option('--clean', is_flag=True, help='Start with clean empty fields instead of prefilling existing profile')
+def profile_setup_command(resume: str | None, auto: bool, clean: bool) -> None:
+	"""Interactively configure candidate profile and job preferences."""
+	run_interactive_setup(resume=resume, auto=auto, clean=clean)
 
 
 @cli.group(name='config')
