@@ -50,42 +50,61 @@ def cli(debug: bool) -> None:
 
 @cli.command(name='auth')
 @click.option(
-	'--platforms',
-	default='linkedin,gmail',
-	help='Comma-separated websites to open for initial login (e.g. linkedin,gmail,wellfound,naukri)',
+	'--platform',
+	default='wellfound',
+	help='Platform to authenticate (wellfound, linkedin, gmail, naukri, all)',
 )
-def auth_command(platforms: str) -> None:
-	"""Open headful Chrome to log into accounts once. Saves session cookies permanently with ZERO credentials in .env."""
-	console.print(
-		Panel.fit(
-			'[bold cyan]🔑 Browser Session Authenticator[/bold cyan]\n\n'
-			'1. A visible Chrome browser window will now open.\n'
-			'2. Log into your accounts (LinkedIn, Google / Gmail, Wellfound, Naukri).\n'
-			'3. Solve any 2FA or security challenges in the browser.\n'
-			'4. Once logged in, return here and press [bold green]Enter[/bold green].\n\n'
-			'[dim]All session tokens & cookies will be saved locally to job_agent/data/browser_storage_state.json.\n'
-			'No passwords or secrets are ever saved in text or .env files![/dim]',
-			title='One-Time Browser Auth',
-			border_style='green',
-		)
-	)
-
+@click.option('--platforms', default=None, help='Comma-separated platforms to open')
+@click.option('--email', default=None, help='Account email to auto-fill')
+@click.option('--password', default=None, help='Account password to auto-fill')
+@click.option('--manual', is_flag=True, help='Log in manually in the Chrome browser window')
+def auth_command(
+	platform: str,
+	platforms: str | None,
+	email: str | None,
+	password: str | None,
+	manual: bool,
+) -> None:
+	"""Log into job platforms and webmail. Supports auto-login or manual browser login, saving session state permanently."""
 	platform_urls = {
+		'wellfound': 'https://wellfound.com/login',
 		'linkedin': 'https://www.linkedin.com/login',
 		'gmail': 'https://mail.google.com/',
-		'wellfound': 'https://wellfound.com/login',
 		'naukri': 'https://www.naukri.com/nlogin/login',
 	}
 
-	targets = [p.strip().lower() for p in platforms.split(',') if p.strip()]
-	initial_url = (
-		platform_urls.get(targets[0], 'https://www.linkedin.com/login')
-		if targets
-		else 'https://www.linkedin.com/login'
-	)
+	raw_target = platforms or platform
+	if raw_target.lower() == 'all':
+		targets = ['wellfound', 'linkedin', 'gmail']
+	else:
+		targets = [p.strip().lower() for p in raw_target.split(',') if p.strip()]
 
-	from browser_use import BrowserProfile, BrowserSession
+	primary_platform = targets[0] if targets else 'wellfound'
+	initial_url = platform_urls.get(primary_platform, 'https://wellfound.com/login')
+
+	from rich.prompt import Prompt
+
+	if not manual and not email:
+		console.print(
+			Panel.fit(
+				f'[bold cyan]🔑 Session Authenticator for {primary_platform.title()}[/bold cyan]\n\n'
+				'Choose how you want to log in:\n'
+				'  [bold yellow]1.[/bold yellow] [bold white]Auto-Fill:[/bold white] Enter credentials here in terminal, agent types them into Chrome for you\n'
+				'  [bold yellow]2.[/bold yellow] [bold white]Manual Browser:[/bold white] Open Chrome and click/type into the web page yourself',
+				title='Login Method',
+				border_style='cyan',
+			)
+		)
+		choice = Prompt.ask('Choose option', choices=['1', '2'], default='1')
+		if choice == '1':
+			email = Prompt.ask(f'Enter {primary_platform.title()} email')
+			password = Prompt.ask(f'Enter {primary_platform.title()} password', password=True)
+		else:
+			manual = True
+
+	from browser_use import Agent, BrowserProfile, BrowserSession
 	from job_agent.config import AgentConfig
+	from job_agent.orchestrator import get_default_llm
 
 	agent_config = AgentConfig()
 	agent_config.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,23 +123,73 @@ def auth_command(platforms: str) -> None:
 
 	async def _run_auth() -> None:
 		await session.start()
-		await session.navigate(initial_url)
-		for p in targets[1:]:
-			url = platform_urls.get(p)
-			if url:
-				await session.create_new_tab(url)
 
-		from rich.prompt import Prompt
+		if email and password and not manual:
+			console.print(
+				f'\n[cyan]🤖 Agent is opening Chrome and filling login form for {primary_platform.title()}...[/cyan]'
+			)
+			sensitive_map = {f'{primary_platform}.com': {'email': email, 'password': password}}
+			task = f"""
+1. Navigate directly to {initial_url}
+2. Find the email or username input field and type '{email}'.
+3. Find the password input field and type '{password}'.
+4. Click the 'Log In' / 'Sign In' button.
+5. Wait 5 seconds for page load or redirect.
+6. Call the 'done' action.
+"""
+			agent = Agent(
+				task=task,
+				llm=get_default_llm(),
+				browser=session,
+				sensitive_data=sensitive_map,
+				use_vision=True,
+				max_actions_per_step=4,
+				max_failures=3,
+			)
+			try:
+				await agent.run(max_steps=12)
+			except Exception as e:
+				console.print(f'[yellow]Auto-fill attempted: {e}[/yellow]')
 
-		loop = asyncio.get_running_loop()
-		await loop.run_in_executor(
-			None,
-			lambda: Prompt.ask(
-				'\n[bold yellow]👉 When you have logged into all accounts in Chrome, press [Enter] here[/bold yellow]'
-			),
-		)
+			loop = asyncio.get_running_loop()
+			await loop.run_in_executor(
+				None,
+				lambda: Prompt.ask(
+					'\n[bold yellow]👉 If a 2FA code or Captcha is shown in Chrome, solve it in the browser, then press [Enter] here[/bold yellow]',
+					default='',
+				),
+			)
+		else:
+			await session.navigate(initial_url)
+			for p in targets[1:]:
+				url = platform_urls.get(p)
+				if url:
+					await session.create_new_tab(url)
+
+			console.print(
+				Panel.fit(
+					f'[bold green]Chrome is now open at {initial_url}![/bold green]\n\n'
+					'1. Switch to the open Chrome browser window.\n'
+					'2. Click into the email & password fields [bold underline]on the web page in Chrome[/bold underline].\n'
+					'3. Enter your credentials and click Log In.\n'
+					'4. Complete any 2FA or Captcha challenges in Chrome.\n'
+					'5. Once logged in and viewing your dashboard/feed, return here and press [bold green]Enter[/bold green].',
+					title='Log In Inside Chrome',
+					border_style='green',
+				)
+			)
+
+			loop = asyncio.get_running_loop()
+			await loop.run_in_executor(
+				None,
+				lambda: Prompt.ask(
+					'\n[bold yellow]👉 Press [Enter] after logging in inside Chrome to save session[/bold yellow]',
+					default='',
+				),
+			)
+
 		console.print('\n[cyan]Finalizing and saving browser session state...[/cyan]')
-		await asyncio.sleep(2)  # Allow StorageStateWatchdog to save cookies
+		await asyncio.sleep(2)
 		await session.stop()
 		console.print(
 			f'[bold green]✅ Success! Browser session saved to: {agent_config.storage_state_path}[/bold green]'
@@ -142,7 +211,7 @@ def auth_command(platforms: str) -> None:
 @click.option('--free', 'flag_free', is_flag=True, help='Shortcut to enable Free mode (100% autonomous autopilot)')
 @click.option('--ask', 'flag_ask', is_flag=True, help='Shortcut to enable Ask mode (prompts human before submit/send)')
 @click.option('--dry-run/--live', default=False, help='Run live or dry-run simulation mode')
-@click.option('--platforms', default='linkedin,wellfound', help='Comma-separated target job boards')
+@click.option('--platforms', default='wellfound,linkedin', help='Comma-separated target job boards')
 @click.option(
 	'--roles',
 	default='Applied AI Engineer,AI Engineer,Software Engineer',
@@ -175,13 +244,14 @@ def auto_command(
 	agent_config = AgentConfig()
 	storage_file = agent_config.storage_state_path
 
-	if login_first or not storage_file.exists():
-		from rich.prompt import Confirm
-
-		console.print('[yellow]Notice: No saved browser session found.[/yellow]')
-		if login_first or Confirm.ask('Would you like to log into your accounts in Chrome now?', default=True):
-			ctx = click.get_current_context()
-			ctx.invoke(auth_command, platforms=platforms)
+	if login_first:
+		ctx = click.get_current_context()
+		ctx.invoke(auth_command, platform=platforms.split(',')[0].strip())
+	elif not storage_file.exists():
+		console.print(
+			'[yellow]Notice: No saved browser session found in storage state. '
+			'Using persistent Chrome profile directory. (Run "job-agent auth" anytime to save session state)[/yellow]'
+		)
 
 	console.print(
 		Panel.fit(
