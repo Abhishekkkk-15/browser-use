@@ -325,6 +325,16 @@ class JobTracker:
 			cursor.execute('DELETE FROM jobs WHERE id = ?', (job_id,))
 			return cursor.rowcount > 0
 
+	def delete_jobs_below_fit_score(self, min_fit_score: float) -> int:
+		"""Delete unapplied jobs with a match score strictly below min_fit_score."""
+		with self._get_connection() as conn:
+			cursor = conn.cursor()
+			cursor.execute(
+				"DELETE FROM jobs WHERE match_score < ? AND status NOT IN ('applied', 'interview', 'offer')",
+				(min_fit_score,),
+			)
+			return cursor.rowcount
+
 	def get_interviews(self, limit: int = 50) -> list[dict[str, Any]]:
 		"""Retrieve recorded interviews."""
 		with self._get_connection() as conn:

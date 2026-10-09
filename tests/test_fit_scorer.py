@@ -67,3 +67,59 @@ def test_fit_scorer_synonym_matching():
 
 	assert result.score >= 70.0
 	assert len(result.matched_skills) == 4
+
+
+def test_fit_scorer_location_penalty():
+	user = UserProfile(
+		name='Alice Smith',
+		current_role='Software Engineer',
+		years_of_experience=3,
+		skills=['Python', 'FastAPI'],
+	)
+
+	# Candidate wants remote or Bangalore
+	target_locations = ['Remote', 'Bangalore']
+
+	# Job is on-site in Berlin with no remote option
+	job = {
+		'job_title': 'Software Engineer',
+		'job_description_summary': 'On-site in Berlin, Germany. Relocation required.',
+		'location': 'Berlin, Germany',
+		'required_skills': 'Python, FastAPI',
+	}
+
+	result = JobFitScorer.score_fit(job, user, target_locations=target_locations)
+	assert 'On-site in non-target location' in result.reasoning
+	# Should have a significant penalty compared to remote
+	job_remote = dict(job)
+	job_remote['location'] = 'Remote'
+	result_remote = JobFitScorer.score_fit(job_remote, user, target_locations=target_locations)
+	assert result.score < result_remote.score
+
+
+def test_fit_scorer_zero_match_irrelevant_job():
+	user = UserProfile(
+		name='Alice Smith',
+		current_role='Python Backend Engineer',
+		years_of_experience=2,
+		skills=['Python', 'Django', 'PostgreSQL'],
+	)
+
+	# Completely irrelevant job: Head of AI / Quantum Physics
+	job = {
+		'job_title': 'Chief Quantum Physics Scientist',
+		'job_description_summary': 'Direct laser physics laboratory in Geneva.',
+		'location': 'Geneva, Switzerland',
+		'required_skills': 'Quantum Electrodynamics, Optics, Lasers',
+	}
+
+	result = JobFitScorer.score_fit(
+		job,
+		user,
+		target_roles=['Backend Engineer', 'Python Engineer'],
+		target_locations=['Remote'],
+	)
+
+	assert result.score == 0.0
+	assert len(result.matched_skills) == 0
+	assert 'Low title relevance' in result.reasoning

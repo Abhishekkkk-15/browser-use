@@ -101,8 +101,9 @@ CRITICAL SEARCH & COMPLETION RULES:
    - Removing conflicting filter pills (like narrow experience or location pills).
    - Clearing filters or refreshing/navigating back to restore the full listings.
    - Scrolling through the active visible feed to find and inspect jobs.
-3. You MUST inspect job postings, extract details, and call 'save_job' for at least 5 relevant jobs before concluding.
-4. If hiring team / recruiter / founder info is visible on the posting, call 'save_hr_contact'.
+3. STRICT RELEVANCE: Only call 'save_job' for postings that genuinely match candidate's target roles, stack, and location. Skip irrelevant postings without calling save_job.
+4. If save_job returns 'REJECTED AS NOT RELEVANT', respect the rejection and continue searching for better-fitting roles.
+5. If hiring team / recruiter / founder info is visible on the posting, call 'save_hr_contact'.
 """,
 				sensitive_data=sensitive_data if sensitive_data else None,
 			)

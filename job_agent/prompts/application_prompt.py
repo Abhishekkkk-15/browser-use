@@ -25,12 +25,12 @@ def build_application_prompt(
 		)
 	elif mode == 'ask':
 		submit_instruction = (
-			"ASK MODE ENABLED (HUMAN CONFIRMATION REQUIRED): When you reach the final review page, you MUST call "
+			'ASK MODE ENABLED (HUMAN CONFIRMATION REQUIRED): When you reach the final review page, you MUST call '
 			f"request_human_confirmation(action='submit_application', company_name='{company_name}', role='{job_title}', "
 			"details='Form filled with contact info and screening answers', preview_content='Ready to submit').\n"
 			"   - If the tool result is APPROVED: click the final 'Submit application' button, verify confirmation modal, and call mark_applied(job_url, status='applied').\n"
 			"   - If the tool result is REJECTED: close or cancel the application modal, and call mark_applied(job_url, status='found', notes='Skipped by user').\n"
-			"   - If the tool result is EDITED: update fields as requested and then click Submit."
+			'   - If the tool result is EDITED: update fields as requested and then click Submit.'
 		)
 	else:
 		submit_instruction = (

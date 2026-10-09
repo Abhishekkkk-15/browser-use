@@ -45,15 +45,17 @@ STEP-BY-STEP WORKFLOW:
    e. RECRUITER / HIRING TEAM:
       - Check the posting for recruiter details ("Meet the hiring team" or "Posted by").
       - If visible, call save_hr_contact(job_url=..., hr_name=..., ...).
-   f. Call save_job(platform="linkedin", ...) with all extracted details.
+   f. STRICT RELEVANCE CHECK BEFORE SAVING:
+      - Only save postings that genuinely match candidate's target role '{role}' and location '{location}'.
+      - If the posting is unrelated or on-site in a distant country without Remote, SKIP IT without calling save_job!
+      - If relevant, call save_job(platform="linkedin", ...) with all extracted details.
 4. Move to the next job card in the list. Scroll the list if needed.
 5. RESILIENCE & COMPLETION RULES:
-   - DO NOT abort or call done until you have inspected and saved at least 5 job postings!
-   - Always call save_job on the currently open posting before finishing.
+   - Focus on QUALITY and RELEVANCE over quantity. Never save irrelevant jobs.
    - If any individual job fails to load, simply click the next job card.
    - Do NOT click 'Easy Apply' to submit during this search phase.
    - Skip blacklisted companies: {prefs.blacklisted_companies}.
-   - When you have cataloged at least 5 postings (up to {max_postings}), conclude with done(text="Successfully cataloged LinkedIn jobs", success=True).
+   - When you have inspected the available listings and saved the matching relevant postings (up to {max_postings}), conclude with done.
 """
 
 
@@ -89,31 +91,32 @@ STEP-BY-STEP WORKFLOW:
      c. If still 0 results, remove the '{role}' filter pill as well, OR click refresh / navigate back to https://wellfound.com/jobs.
      d. FALL BACK TO THE VISIBLE FEED: Wellfound's default feed has 150+ active startup listings. Browse this visible feed directly!
 
-4. INSPECTING AND CATALOGING JOBS (MANDATORY MINIMUM: AT LEAST 5 JOBS):
+4. INSPECTING AND CATALOGING JOBS (STRICT RELEVANCE):
    - Browse through the job cards in the feed (focus on {role}, AI Engineer, Machine Learning, Data Science, Software Engineer, Backend, Fullstack, or Tech roles).
    - For EACH relevant job:
      a. Click the job title or company card to view the full job posting details.
-     b. Extract the following information:
+     b. Verify relevance to '{role}' and '{location}':
+        - If the job is unrelated (e.g. Sales, Marketing, completely different stack, or on-site in a distant foreign country without Remote), DO NOT call save_job. Return to feed and inspect next job!
+     c. If genuinely relevant, extract details:
         - Job title (e.g. 'AI Engineer - LLMs & Generative AI')
         - Company name (e.g. 'CODEMIND AI')
         - Exact job URL (copy from address bar or link)
         - Location and remote status (e.g. 'Remote')
-        - Compensation (salary range and equity percentage, e.g. '$120k - $160k • 0.5% equity')
+        - Compensation (salary range and equity percentage)
         - Summary of job responsibilities & duties
         - Required skills and tech stack (e.g. Python, PyTorch, LangChain, FastAPI)
-     c. Call save_job(platform="wellfound", ...) with all extracted fields.
-     d. Check the page for the hiring team: Wellfound often shows an "Active hiring team" or "Meet the team" section with founders, engineering leads, or recruiters. If visible, call save_hr_contact(job_url=..., hr_name=..., ...).
-     e. Use browser back (go_back) or click "Jobs" to return to the feed.
-     f. Proceed to the next job card and repeat.
+     d. Call save_job(platform="wellfound", ...) with all extracted fields. The system will reject non-relevant jobs.
+     e. Check the page for the hiring team: Wellfound often shows an "Active hiring team" or "Meet the team" section with founders, engineering leads, or recruiters. If visible, call save_hr_contact(job_url=..., hr_name=..., ...).
+     f. Use browser back (go_back) or click "Jobs" to return to the feed.
+     g. Proceed to the next job card and repeat.
 
-5. STRICT RESILIENCE & COMPLETION RULES:
-   - YOU MUST call save_job AT LEAST 5 TIMES before you are allowed to conclude.
-   - NEVER call done after only 3-5 steps or without saving any jobs.
-   - If a filter is tricky or stubborn, ignore the filter entirely and simply scroll the default feed to inspect and save jobs.
+5. RESILIENCE & COMPLETION RULES:
+   - Focus on RELEVANCE over volume. Never save irrelevant postings just to increment count.
+   - If a filter is tricky or stubborn, scroll the default feed to inspect relevant startup listings.
    - If any individual job fails to load, immediately return to the feed and click the next listing.
    - Do NOT click 'Apply' to submit applications during this discovery phase.
    - Skip blacklisted companies: {prefs.blacklisted_companies}.
-   - ONLY call done when you have inspected and saved at least 5 relevant jobs (up to {max_postings} postings).
+   - Conclude with done when you have inspected the available listings and saved the matching relevant jobs (up to {max_postings} postings).
 """
 
 

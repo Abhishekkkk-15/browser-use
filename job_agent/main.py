@@ -125,9 +125,7 @@ def auth_command(
 		await session.start()
 
 		if email and password and not manual:
-			console.print(
-				f'\n[cyan]🤖 Agent is opening Chrome and filling login form for {primary_platform.title()}...[/cyan]'
-			)
+			console.print(f'\n[cyan]🤖 Agent is opening Chrome and filling login form for {primary_platform.title()}...[/cyan]')
 			sensitive_map = {f'{primary_platform}.com': {'email': email, 'password': password}}
 			task = f"""
 1. Navigate directly to {initial_url}
@@ -191,9 +189,7 @@ def auth_command(
 		console.print('\n[cyan]Finalizing and saving browser session state...[/cyan]')
 		await asyncio.sleep(2)
 		await session.stop()
-		console.print(
-			f'[bold green]✅ Success! Browser session saved to: {agent_config.storage_state_path}[/bold green]'
-		)
+		console.print(f'[bold green]✅ Success! Browser session saved to: {agent_config.storage_state_path}[/bold green]')
 		console.print(
 			'[green]You can now run [bold]job-agent auto[/bold] with 100% autonomous operation and zero credentials in .env![/green]'
 		)
@@ -527,19 +523,62 @@ def jobs_command(limit: int, platform: str | None) -> None:
 	for j in jobs:
 		hr_info = j.get('hr_name') or ''
 		if j.get('hr_email'):
-			hr_info += f" ({j['hr_email']})"
+			hr_info += f' ({j["hr_email"]})'
 		table.add_row(
 			str(j['id']),
 			(j.get('job_title') or 'Unknown')[:30],
 			(j.get('company_name') or 'Unknown')[:20],
 			str(j.get('platform') or 'other').upper(),
 			(j.get('location') or 'Remote')[:18],
-			f"{j.get('match_score', 0):.0f}%",
+			f'{j.get("match_score", 0):.0f}%',
 			hr_info[:22] if hr_info else '—',
 			str(j.get('status') or 'found'),
 		)
 
 	console.print(table)
+
+
+@cli.command(name='clean')
+@click.option(
+	'--min-fit',
+	default=45.0,
+	type=float,
+	help='Purge unapplied jobs with match score below this percentage',
+)
+@click.option(
+	'--yes',
+	'-y',
+	is_flag=True,
+	help='Skip confirmation prompt and immediately clean',
+)
+def clean_command(min_fit: float, yes: bool) -> None:
+	"""Clean and purge non-relevant jobs below minimum fit score from database."""
+	tracker = JobTracker()
+	with tracker._get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(
+			"SELECT COUNT(*) FROM jobs WHERE match_score < ? AND status NOT IN ('applied', 'interview', 'offer')",
+			(min_fit,),
+		)
+		count = cursor.fetchone()[0]
+
+	if count == 0:
+		console.print(f'[green]Database is clean! No unapplied jobs found with match score < {min_fit:.0f}%.[/green]')
+		return
+
+	if not yes:
+		from rich.prompt import Confirm
+
+		confirmed = Confirm.ask(
+			f'Found {count} non-relevant job(s) with match score < {min_fit:.0f}%. Delete them from database?',
+			default=True,
+		)
+		if not confirmed:
+			console.print('[yellow]Aborted clean.[/yellow]')
+			return
+
+	deleted = tracker.delete_jobs_below_fit_score(min_fit)
+	console.print(f'[bold green]Successfully deleted {deleted} non-relevant job(s) from database.[/bold green]')
 
 
 # ==============================================================================
@@ -571,24 +610,24 @@ def job_show_command(job_id: int) -> None:
 		skills_str = str(j.get('required_skills') or 'None')
 
 	details = (
-		f"[bold white]Title:[/bold white] {j.get('job_title')}\n"
-		f"[bold white]Company:[/bold white] [bold cyan]{j.get('company_name')}[/bold cyan]\n"
-		f"[bold white]Platform:[/bold white] {str(j.get('platform')).upper()}\n"
-		f"[bold white]Location:[/bold white] {j.get('location') or 'Remote'}\n"
-		f"[bold white]Salary / Equity:[/bold white] {j.get('salary_range') or 'Not disclosed'}\n"
-		f"[bold white]URL:[/bold white] [underline blue]{j.get('job_url')}[/underline blue]\n"
-		f"[bold white]Application Type:[/bold white] {j.get('application_type')}\n"
-		f"[bold white]Status:[/bold white] {j.get('status')}\n"
-		f"[bold white]Match Score:[/bold white] [bold green]{j.get('match_score', 0):.1f}%[/bold green]\n"
-		f"[bold white]Recruiter / HR:[/bold white] {j.get('hr_name') or 'None'}\n"
-		f"[bold white]HR Email:[/bold white] {j.get('hr_email') or 'None'}\n"
-		f"[bold white]HR LinkedIn:[/bold white] {j.get('hr_linkedin') or 'None'}\n\n"
-		f"[bold yellow]Required Skills & Stack:[/bold yellow]\n{skills_str}\n\n"
-		f"[bold yellow]Job Description Summary:[/bold yellow]\n{j.get('job_description_summary') or 'None'}\n\n"
-		f"[bold yellow]Notes / Feedback:[/bold yellow]\n{j.get('notes') or 'None'}"
+		f'[bold white]Title:[/bold white] {j.get("job_title")}\n'
+		f'[bold white]Company:[/bold white] [bold cyan]{j.get("company_name")}[/bold cyan]\n'
+		f'[bold white]Platform:[/bold white] {str(j.get("platform")).upper()}\n'
+		f'[bold white]Location:[/bold white] {j.get("location") or "Remote"}\n'
+		f'[bold white]Salary / Equity:[/bold white] {j.get("salary_range") or "Not disclosed"}\n'
+		f'[bold white]URL:[/bold white] [underline blue]{j.get("job_url")}[/underline blue]\n'
+		f'[bold white]Application Type:[/bold white] {j.get("application_type")}\n'
+		f'[bold white]Status:[/bold white] {j.get("status")}\n'
+		f'[bold white]Match Score:[/bold white] [bold green]{j.get("match_score", 0):.1f}%[/bold green]\n'
+		f'[bold white]Recruiter / HR:[/bold white] {j.get("hr_name") or "None"}\n'
+		f'[bold white]HR Email:[/bold white] {j.get("hr_email") or "None"}\n'
+		f'[bold white]HR LinkedIn:[/bold white] {j.get("hr_linkedin") or "None"}\n\n'
+		f'[bold yellow]Required Skills & Stack:[/bold yellow]\n{skills_str}\n\n'
+		f'[bold yellow]Job Description Summary:[/bold yellow]\n{j.get("job_description_summary") or "None"}\n\n'
+		f'[bold yellow]Notes / Feedback:[/bold yellow]\n{j.get("notes") or "None"}'
 	)
 
-	console.print(Panel(details, title=f"Job Record #{j['id']}", border_style='cyan'))
+	console.print(Panel(details, title=f'Job Record #{j["id"]}', border_style='cyan'))
 
 
 @job_group.command(name='update')
@@ -640,9 +679,7 @@ def pitch_command(job_id: int) -> None:
 		return
 
 	user_profile = UserProfile.from_env_or_defaults()
-	console.print(
-		f"[bold cyan]Generating tailored pitch for {job.get('job_title')} at {job.get('company_name')}...[/bold cyan]"
-	)
+	console.print(f'[bold cyan]Generating tailored pitch for {job.get("job_title")} at {job.get("company_name")}...[/bold cyan]')
 
 	llm = get_default_llm()
 	from browser_use.llm.messages import UserMessage
@@ -651,15 +688,13 @@ def pitch_command(job_id: int) -> None:
 
 	async def _generate() -> str:
 		response = await llm.ainvoke([UserMessage(content=prompt)])
-		return str(
-			response.completion if hasattr(response, 'completion') else getattr(response, 'output', str(response))
-		).strip()
+		return str(response.completion if hasattr(response, 'completion') else getattr(response, 'output', str(response))).strip()
 
 	pitch = asyncio.run(_generate())
 	console.print(
 		Panel(
 			pitch,
-			title=f"Custom Pitch: {job.get('job_title')} @ {job.get('company_name')}",
+			title=f'Custom Pitch: {job.get("job_title")} @ {job.get("company_name")}',
 			border_style='green',
 		)
 	)
@@ -754,21 +789,21 @@ def profile_show_command() -> None:
 	user = UserProfile.from_env_or_defaults()
 
 	profile_text = (
-		f"[bold white]Name:[/bold white] {user.name}\n"
-		f"[bold white]Current Role:[/bold white] {user.current_role}\n"
-		f"[bold white]Current Employer:[/bold white] {user.current_company or 'Not specified'}\n"
-		f"[bold white]Experience:[/bold white] {user.years_of_experience} years\n"
-		f"[bold white]Location:[/bold white] {user.location}\n"
-		f"[bold white]Email:[/bold white] {user.email}\n"
-		f"[bold white]Phone:[/bold white] {user.phone}\n"
-		f"[bold white]LinkedIn:[/bold white] {user.linkedin_url}\n"
-		f"[bold white]GitHub:[/bold white] {user.github_url or 'None'}\n"
-		f"[bold white]Portfolio:[/bold white] {user.portfolio_url or 'None'}\n"
-		f"[bold white]Education:[/bold white] {user.education}\n"
-		f"[bold white]Resume PDF:[/bold white] {user.resume_path} ({'[green]Found[/green]' if user.resume_path.exists() else '[red]Missing[/red]'})\n"
-		f"[bold white]Resume Text:[/bold white] {user.resume_text_path} ({'[green]Found[/green]' if user.resume_text_path.exists() else '[red]Missing[/red]'})\n\n"
-		f"[bold yellow]Core Skills ({len(user.skills)}):[/bold yellow]\n{', '.join(user.skills)}\n\n"
-		f"[bold yellow]Executive Summary:[/bold yellow]\n{user.summary}"
+		f'[bold white]Name:[/bold white] {user.name}\n'
+		f'[bold white]Current Role:[/bold white] {user.current_role}\n'
+		f'[bold white]Current Employer:[/bold white] {user.current_company or "Not specified"}\n'
+		f'[bold white]Experience:[/bold white] {user.years_of_experience} years\n'
+		f'[bold white]Location:[/bold white] {user.location}\n'
+		f'[bold white]Email:[/bold white] {user.email}\n'
+		f'[bold white]Phone:[/bold white] {user.phone}\n'
+		f'[bold white]LinkedIn:[/bold white] {user.linkedin_url}\n'
+		f'[bold white]GitHub:[/bold white] {user.github_url or "None"}\n'
+		f'[bold white]Portfolio:[/bold white] {user.portfolio_url or "None"}\n'
+		f'[bold white]Education:[/bold white] {user.education}\n'
+		f'[bold white]Resume PDF:[/bold white] {user.resume_path} ({"[green]Found[/green]" if user.resume_path.exists() else "[red]Missing[/red]"})\n'
+		f'[bold white]Resume Text:[/bold white] {user.resume_text_path} ({"[green]Found[/green]" if user.resume_text_path.exists() else "[red]Missing[/red]"})\n\n'
+		f'[bold yellow]Core Skills ({len(user.skills)}):[/bold yellow]\n{", ".join(user.skills)}\n\n'
+		f'[bold yellow]Executive Summary:[/bold yellow]\n{user.summary}'
 	)
 
 	console.print(Panel(profile_text, title='Candidate Active Profile', border_style='cyan'))
@@ -790,23 +825,23 @@ def config_check_command() -> None:
 	model = os.getenv('OPENAI_MODEL', 'gpt-5.6-luna')
 	base_url = os.getenv('OPENAI_BASE_URL', 'default')
 
-	console.print(f"  [bold]AI Model:[/bold] {model}")
-	console.print(f"  [bold]API Base URL:[/bold] {base_url}")
+	console.print(f'  [bold]AI Model:[/bold] {model}')
+	console.print(f'  [bold]API Base URL:[/bold] {base_url}')
 	console.print(
-		f"  [bold]Candidate Name:[/bold] {user.name} ({'[green]OK[/green]' if user.name != 'Candidate Name' else '[yellow]Default[/yellow]'})"
+		f'  [bold]Candidate Name:[/bold] {user.name} ({"[green]OK[/green]" if user.name != "Candidate Name" else "[yellow]Default[/yellow]"})'
 	)
 	console.print(
-		f"  [bold]Resume PDF:[/bold] {user.resume_path} ({'[green]OK[/green]' if user.resume_path.exists() else '[red]Missing[/red]'})"
+		f'  [bold]Resume PDF:[/bold] {user.resume_path} ({"[green]OK[/green]" if user.resume_path.exists() else "[red]Missing[/red]"})'
 	)
 	console.print(
-		f"  [bold]Resume Text:[/bold] {user.resume_text_path} ({'[green]OK[/green]' if user.resume_text_path.exists() else '[red]Missing[/red]'})"
+		f'  [bold]Resume Text:[/bold] {user.resume_text_path} ({"[green]OK[/green]" if user.resume_text_path.exists() else "[red]Missing[/red]"})'
 	)
 
 	# Check 2: Database
 	tracker = JobTracker()
 	stats = tracker.get_stats()
-	console.print(f"  [bold]Database Path:[/bold] {tracker.db_path} ([green]Connected[/green])")
-	console.print(f"  [bold]Total Jobs in Database:[/bold] {stats['total_found']}")
+	console.print(f'  [bold]Database Path:[/bold] {tracker.db_path} ([green]Connected[/green])')
+	console.print(f'  [bold]Total Jobs in Database:[/bold] {stats["total_found"]}')
 
 	# Check 3: LLM Connectivity
 	console.print('\n[bold cyan]Testing LLM Connectivity...[/bold cyan]')

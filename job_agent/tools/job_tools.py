@@ -108,10 +108,28 @@ def create_job_tools(
 				'job_title': params.job_title,
 				'job_description_summary': params.job_description_summary,
 				'required_skills': skills_list,
+				'location': params.location,
 			},
 			user_profile,
+			target_roles=preferences.target_roles,
+			target_locations=preferences.target_locations,
 		)
 		match_score = fit_result.score
+
+		# STRICT RELEVANCE GATE: Never save non-relevant jobs!
+		if match_score < preferences.min_fit_score:
+			logger.info(
+				f"Rejected non-relevant job '{params.job_title}' at '{params.company_name}' "
+				f'(Score: {match_score:.1f}% < min threshold {preferences.min_fit_score:.1f}%). Reason: {fit_result.reasoning}'
+			)
+			return ActionResult(
+				extracted_content=(
+					f"REJECTED AS NOT RELEVANT: '{params.job_title}' at '{params.company_name}' scored only {match_score:.0f}% match "
+					f'({fit_result.reasoning}), which is below your minimum relevance threshold ({preferences.min_fit_score:.0f}%). '
+					f'This posting was NOT saved to the database. Continue searching and only save postings that genuinely match candidate skills, role, and location.'
+				),
+				include_extracted_content_only_once=True,
+			)
 
 		# Normalize job URL to prevent search URL collisions
 		cleaned_url = params.job_url.strip()
@@ -317,11 +335,7 @@ def create_job_tools(
 				extracted_content=f'REJECTED: User chose to skip {params.action}. Cancel this action and move on.'
 			)
 		else:
-			new_text = await loop.run_in_executor(
-				None, lambda: Prompt.ask('Enter modified message/pitch text to use')
-			)
-			return ActionResult(
-				extracted_content=f"EDITED: User updated content to: '{new_text}'. Use this text and proceed."
-			)
+			new_text = await loop.run_in_executor(None, lambda: Prompt.ask('Enter modified message/pitch text to use'))
+			return ActionResult(extracted_content=f"EDITED: User updated content to: '{new_text}'. Use this text and proceed.")
 
 	return tools

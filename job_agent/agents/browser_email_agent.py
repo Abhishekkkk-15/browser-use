@@ -69,11 +69,7 @@ Keep it concise, respectful, highlighting what value the candidate brings to {jo
 """
 		try:
 			response = await self.llm.ainvoke([UserMessage(content=prompt)])
-			raw_text = (
-				response.completion
-				if hasattr(response, 'completion')
-				else getattr(response, 'output', str(response))
-			)
+			raw_text = response.completion if hasattr(response, 'completion') else getattr(response, 'output', str(response))
 			lines = str(raw_text).strip().splitlines()
 			subject_line = f'Application: {job.get("job_title")} - {self.user_profile.name}'
 			body_lines: list[str] = []
@@ -90,14 +86,14 @@ Keep it concise, respectful, highlighting what value the candidate brings to {jo
 			logger.warning(f'LLM cold email drafting failed, using default template: {e}')
 			subject_line = f'{job.get("job_title")} Application - {self.user_profile.name}'
 			body_text = (
-				f"Hi {job.get('hr_name') or 'Hiring Team'},\n\n"
-				f"I noticed your opening for {job.get('job_title')} at {job.get('company_name')} and wanted to reach out directly.\n\n"
-				f"As a {self.user_profile.current_role} with {self.user_profile.years_of_experience}+ years of experience, "
-				f"I have extensive hands-on expertise with {', '.join(self.user_profile.skills[:4])}. "
-				f"I would love the opportunity to contribute to {job.get('company_name')}.\n\n"
-				f"My portfolio: {self.user_profile.portfolio_url or self.user_profile.github_url}\n"
-				f"LinkedIn: {self.user_profile.linkedin_url}\n\n"
-				f"Best regards,\n{self.user_profile.name}"
+				f'Hi {job.get("hr_name") or "Hiring Team"},\n\n'
+				f'I noticed your opening for {job.get("job_title")} at {job.get("company_name")} and wanted to reach out directly.\n\n'
+				f'As a {self.user_profile.current_role} with {self.user_profile.years_of_experience}+ years of experience, '
+				f'I have extensive hands-on expertise with {", ".join(self.user_profile.skills[:4])}. '
+				f'I would love the opportunity to contribute to {job.get("company_name")}.\n\n'
+				f'My portfolio: {self.user_profile.portfolio_url or self.user_profile.github_url}\n'
+				f'LinkedIn: {self.user_profile.linkedin_url}\n\n'
+				f'Best regards,\n{self.user_profile.name}'
 			)
 			return subject_line, body_text
 
@@ -116,10 +112,10 @@ Keep it concise, respectful, highlighting what value the candidate brings to {jo
 		# Ask mode confirmation before browser action
 		if self.preferences.mode == 'ask':
 			preview_card = (
-				f"[bold white]Recipient:[/bold white] [bold cyan]{job.get('hr_name') or 'Hiring Manager'}[/bold cyan] <{hr_email}>\n"
-				f"[bold white]Company:[/bold white] {job.get('company_name')} | [bold white]Role:[/bold white] {job.get('job_title')}\n"
-				f"[bold white]Subject:[/bold white] [yellow]{subject}[/yellow]\n\n"
-				f"[bold green]Email Body:[/bold green]\n{body}"
+				f'[bold white]Recipient:[/bold white] [bold cyan]{job.get("hr_name") or "Hiring Manager"}[/bold cyan] <{hr_email}>\n'
+				f'[bold white]Company:[/bold white] {job.get("company_name")} | [bold white]Role:[/bold white] {job.get("job_title")}\n'
+				f'[bold white]Subject:[/bold white] [yellow]{subject}[/yellow]\n\n'
+				f'[bold green]Email Body:[/bold green]\n{body}'
 			)
 			console.print()
 			console.print(
@@ -165,7 +161,7 @@ Keep it concise, respectful, highlighting what value the candidate brings to {jo
 6. Call the 'done' action.
 """
 
-		logger.info(f"📧 Opening Gmail in browser to send outreach to {hr_email} at {job.get('company_name')}...")
+		logger.info(f'📧 Opening Gmail in browser to send outreach to {hr_email} at {job.get("company_name")}...')
 
 		agent = Agent(
 			task=task_prompt,
@@ -182,7 +178,7 @@ Keep it concise, respectful, highlighting what value the candidate brings to {jo
 		success = bool(history.is_successful())
 
 		if success:
-			logger.info(f"✅ Successfully sent browser email to {hr_email} for {job.get('company_name')}")
+			logger.info(f'✅ Successfully sent browser email to {hr_email} for {job.get("company_name")}')
 			# Record in database
 			self.tracker.record_cold_email(
 				job_id=job['id'],
@@ -220,11 +216,7 @@ Keep it concise, respectful, highlighting what value the candidate brings to {jo
 		should_close_session = False
 		session = self.browser_session
 		if session is None:
-			storage_arg = (
-				str(self.agent_config.storage_state_path)
-				if self.agent_config.storage_state_path.exists()
-				else None
-			)
+			storage_arg = str(self.agent_config.storage_state_path) if self.agent_config.storage_state_path.exists() else None
 			profile = BrowserProfile(
 				user_data_dir=self.agent_config.chrome_user_data_dir,
 				storage_state=storage_arg,

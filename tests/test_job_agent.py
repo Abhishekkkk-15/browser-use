@@ -105,6 +105,23 @@ def test_database_lifecycle(temp_db: JobTracker, tmp_path: Path):
 	assert csv_out.exists()
 	assert 'Acme Inc' in csv_out.read_text(encoding='utf-8')
 
+	# Add a low-fit unapplied job and verify delete_jobs_below_fit_score
+	low_job = {
+		'job_title': 'Dentist',
+		'company_name': 'Dental Clinic',
+		'job_url': 'https://example.com/jobs/dental',
+		'platform': 'other',
+		'match_score': 12.0,
+		'status': 'found',
+	}
+	temp_db.add_job(low_job)
+	assert temp_db.is_job_saved('https://example.com/jobs/dental')
+	deleted_count = temp_db.delete_jobs_below_fit_score(40.0)
+	assert deleted_count == 1
+	assert not temp_db.is_job_saved('https://example.com/jobs/dental')
+	# Applied job must remain safe
+	assert temp_db.is_job_saved('https://example.com/jobs/123')
+
 
 @pytest.mark.asyncio
 async def test_job_tools_actions(
@@ -169,6 +186,22 @@ async def test_job_tools_actions(
 		},
 	)
 	assert '[DRY RUN]' in str(mark_res.extracted_content)
+
+	# 6. Test strict rejection of non-relevant job
+	sample_preferences.min_fit_score = 45.0
+	reject_res = await tools.registry.execute_action(
+		'save_job',
+		{
+			'job_title': 'Chief Radiologist Physician',
+			'company_name': 'Hospital Center',
+			'job_url': 'https://example.com/jobs/radiology-777',
+			'platform': 'wellfound',
+			'location': 'Geneva, Switzerland',
+			'required_skills': 'Oncology, MRI, Radiology',
+		},
+	)
+	assert 'REJECTED AS NOT RELEVANT' in str(reject_res.extracted_content)
+	assert not temp_db.is_job_saved('https://example.com/jobs/radiology-777')
 
 
 def test_email_sender_simulation(temp_db: JobTracker, sample_user: UserProfile):
