@@ -28,7 +28,7 @@ class UserProfile(BaseModel):
 		default=Path('job_agent/data/resume.txt'),
 		description='Path to plain text resume for LLM context',
 	)
-	years_of_experience: int = Field(default=3, description='Total years of professional experience')
+	years_of_experience: float = Field(default=1.0, description='Total years of professional experience')
 	current_role: str = Field(default='Software Engineer', description='Current or most recent job title')
 	current_company: str | None = Field(default=None, description='Current employer')
 	skills: list[str] = Field(
@@ -85,7 +85,7 @@ class UserProfile(BaseModel):
 			kwargs['portfolio_url'] = os.getenv('USER_PORTFOLIO')
 		if os.getenv('USER_EXPERIENCE_YEARS'):
 			try:
-				kwargs['years_of_experience'] = int(os.getenv('USER_EXPERIENCE_YEARS', '3'))
+				kwargs['years_of_experience'] = float(os.getenv('USER_EXPERIENCE_YEARS', '1.0'))
 			except ValueError:
 				pass
 		if os.getenv('USER_CURRENT_ROLE'):
@@ -133,9 +133,20 @@ class JobPreferences(BaseModel):
 		description='Target locations / cities or Remote',
 	)
 	experience_level: Literal['internship', 'entry_level', 'associate', 'mid_senior', 'director', 'executive'] = Field(
-		default='mid_senior',
+		default='entry_level',
 		description='Target experience level filter',
 	)
+
+	def get_linkedin_experience_param(self, user_exp: float) -> str:
+		"""Get LinkedIn experience filter parameter based on candidate years of experience."""
+		if user_exp <= 1.0:
+			return '&f_E=1,2'  # Internship, Entry level
+		elif user_exp <= 3.0:
+			return '&f_E=2,3'  # Entry level, Associate
+		elif user_exp <= 6.0:
+			return '&f_E=3,4'  # Associate, Mid-Senior
+		else:
+			return '&f_E=4,5'  # Mid-Senior, Director
 	platforms: list[Literal['linkedin', 'wellfound', 'naukri']] = Field(
 		default_factory=lambda: ['linkedin', 'wellfound', 'naukri'],
 		description='Job platforms to search and apply on',

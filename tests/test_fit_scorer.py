@@ -123,3 +123,74 @@ def test_fit_scorer_zero_match_irrelevant_job():
 	assert result.score == 0.0
 	assert len(result.matched_skills) == 0
 	assert 'Low title relevance' in result.reasoning
+
+
+def test_fit_scorer_rejects_senior_roles_for_junior_candidate():
+	# Candidate has less than a year of experience (0.5 years)
+	user = UserProfile(
+		name='Junior Dev',
+		current_role='Software Engineer',
+		years_of_experience=0.5,
+		skills=['Python', 'FastAPI', 'Docker'],
+	)
+
+	# Job is Senior role
+	job = {
+		'job_title': 'Senior Backend Engineer',
+		'job_description_summary': 'Looking for an engineer with Python and FastAPI experience.',
+		'location': 'Remote',
+		'required_skills': 'Python, FastAPI',
+	}
+
+	result = JobFitScorer.score_fit(job, user)
+	assert result.score == 0.0
+	assert 'Seniority mismatch' in result.reasoning
+
+
+def test_fit_scorer_rejects_2_plus_years_for_sub_year_candidate():
+	# Candidate has less than a year of experience (0.5 years)
+	user = UserProfile(
+		name='Junior Dev',
+		current_role='Software Engineer',
+		years_of_experience=0.5,
+		skills=['Python', 'FastAPI', 'PostgreSQL'],
+	)
+
+	# Job title doesn't say Senior, but description explicitly requires 2+ years
+	job = {
+		'job_title': 'Software Engineer',
+		'job_description_summary': 'Must have at least 2+ years of experience with Python and FastAPI.',
+		'location': 'Remote',
+		'required_skills': 'Python, FastAPI, PostgreSQL',
+	}
+
+	result = JobFitScorer.score_fit(job, user)
+	assert result.score == 0.0
+	assert 'Experience gap' in result.reasoning
+	assert 'Requires 2+ yrs exp' in result.reasoning
+
+
+def test_fit_scorer_accepts_junior_role_for_sub_year_candidate():
+	# Candidate has less than a year of experience (0.5 years)
+	user = UserProfile(
+		name='Junior Dev',
+		current_role='Software Engineer',
+		years_of_experience=0.5,
+		skills=['Python', 'FastAPI', 'PostgreSQL'],
+	)
+
+	# Job is Entry Level / Junior matching their experience
+	job = {
+		'job_title': 'Junior Python Developer',
+		'job_description_summary': 'Great opportunity for 0-1 years of experience with Python and FastAPI.',
+		'location': 'Remote',
+		'required_skills': 'Python, FastAPI',
+	}
+
+	result = JobFitScorer.score_fit(
+		job,
+		user,
+		target_roles=['Python Developer', 'Software Engineer'],
+	)
+	assert result.score >= 70.0
+	assert 'High title relevance' in result.reasoning

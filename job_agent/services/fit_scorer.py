@@ -14,8 +14,8 @@ class JobFitResult(BaseModel):
 	score: float = Field(ge=0.0, le=100.0, description='Overall fit score percentage (0-100)')
 	matched_skills: list[str] = Field(default_factory=list, description='Skills required that the candidate possesses')
 	missing_skills: list[str] = Field(default_factory=list, description='Skills required that the candidate lacks')
-	title_score: float = Field(ge=0.0, le=100.0, description='Job title relevance score (0-100)')
-	experience_score: float = Field(ge=0.0, le=100.0, description='Experience level alignment score (0-100)')
+	title_score: float = Field(default=0.0, ge=0.0, le=100.0, description='Job title relevance score (0-100)')
+	experience_score: float = Field(default=0.0, ge=0.0, le=100.0, description='Experience level alignment score (0-100)')
 	reasoning: str = Field(description='Human-readable explanation of why this job is or is not a match')
 
 
@@ -111,18 +111,67 @@ class JobFitScorer:
 			if keyword in title and (keyword in user_text_lower or any(keyword in r for r in candidate_roles)):
 				title_score = min(title_score + 10.0, 100.0)
 
-		# 3. Experience Alignment
-		exp_score = 75.0
-		user_exp = user.years_of_experience
-		exp_match = re.search(r'(\d+)\+?\s*(?:to\s*(\d+))?\s*(?:years|yrs)', description)
+		# 3. Experience Alignment & Strict Seniority Gates
+		user_exp = float(user.years_of_experience)
+
+		# Seniority Mismatch Gate
+		seniority_regex = r'\b(senior|sr\.?|lead|staff|principal|head\s+of|director|manager|vp)\b'
+		is_senior_role = bool(re.search(seniority_regex, title, re.IGNORECASE))
+		if is_senior_role and user_exp < 2.5:
+			return JobFitResult(
+				score=0.0,
+				matched_skills=matched,
+				missing_skills=missing,
+				reasoning=f"Seniority mismatch: '{job.get('job_title')}' requires Senior experience (Candidate has {user_exp:.1f} yr exp)",
+			)
+
+		# Check explicit years requirement in description or title
+		full_text_for_exp = f"{description} {job.get('experience_required', '')} {title}".lower()
+		exp_match = re.search(r'(\d+(?:\.\d+)?)\+?\s*(?:to\s*(\d+(?:\.\d+)?))?\s*(?:years|yrs)', full_text_for_exp)
+		min_req = None
 		if exp_match:
-			min_req = int(exp_match.group(1))
+			try:
+				min_req = float(exp_match.group(1))
+			except ValueError:
+				pass
+
+		exp_penalty = 0.0
+		exp_note = ''
+		if min_req is not None:
 			if user_exp >= min_req:
 				exp_score = 100.0
-			elif user_exp == min_req - 1:
+			elif user_exp >= min_req - 0.5:
 				exp_score = 75.0
 			else:
-				exp_score = max(20.0, 100.0 - (min_req - user_exp) * 25.0)
+				gap = min_req - user_exp
+				# HARD GATE: If candidate has <= 1 yr experience and job requires 2+ yrs
+				if user_exp <= 1.0 and min_req >= 2.0:
+					return JobFitResult(
+						score=0.0,
+						matched_skills=matched,
+						missing_skills=missing,
+						reasoning=f'Experience gap: Requires {min_req:.0f}+ yrs exp (Candidate has {user_exp:.1f} yr exp)',
+					)
+				# 2+ years gap for any experience level
+				if gap >= 2.0:
+					return JobFitResult(
+						score=0.0,
+						matched_skills=matched,
+						missing_skills=missing,
+						reasoning=f'Experience gap: Requires {min_req:.0f}+ yrs exp (Candidate has {user_exp:.1f} yr exp)',
+					)
+
+				exp_penalty = gap * 25.0
+				exp_note = f'Requires {min_req:.0f}+ yrs exp'
+				exp_score = max(20.0, 100.0 - (gap * 35.0))
+		else:
+			# Check junior/entry keywords
+			if re.search(r'\b(junior|jr\.?|entry|intern|associate|graduate|fresh)\b', title, re.IGNORECASE):
+				exp_score = 100.0 if user_exp <= 2.0 else 80.0
+			elif user_exp < 1.0:
+				exp_score = 50.0
+			else:
+				exp_score = 75.0
 
 		# 4. Location & Remote Alignment
 		loc_penalty = 0.0
@@ -140,9 +189,9 @@ class JobFitScorer:
 		if len(matched) == 0 and title_score < 40.0:
 			final_score = 0.0
 		else:
-			# Weighted Overall Score: 50% Skills, 35% Title, 15% Experience
-			base_score = (skill_score * 0.50) + (title_score * 0.35) + (exp_score * 0.15)
-			final_score = max(0.0, min(100.0, base_score - loc_penalty))
+			# Weighted Overall Score: 45% Skills, 30% Title, 25% Experience
+			base_score = (skill_score * 0.45) + (title_score * 0.30) + (exp_score * 0.25)
+			final_score = max(0.0, min(100.0, base_score - loc_penalty - exp_penalty))
 
 		final_score = round(final_score, 1)
 
@@ -156,6 +205,8 @@ class JobFitScorer:
 			parts.append('Low title relevance')
 		if loc_note:
 			parts.append(loc_note)
+		if exp_note:
+			parts.append(exp_note)
 		if missing and len(matched) > 0:
 			parts.append(f'Missing: {", ".join(missing[:3])}')
 

@@ -282,6 +282,7 @@ def auth_command(
 	help='Minimum Best-Fit score percentage required to apply',
 )
 @click.option('--max-apply', default=5, type=int, help='Maximum number of applications to submit')
+@click.option('--years-exp', default=None, type=float, help='Candidate years of experience (e.g. 0.5, 1, 2)')
 @click.option('--login-first', is_flag=True, help='Prompt to authenticate in browser before running')
 def auto_command(
 	mode: str,
@@ -293,6 +294,7 @@ def auto_command(
 	locations: str,
 	min_fit: float,
 	max_apply: int,
+	years_exp: float | None,
 	login_first: bool,
 ) -> None:
 	"""Autonomous end-to-end recruitment agent with zero credentials and Free / Ask mode."""
@@ -300,6 +302,10 @@ def auto_command(
 
 	agent_config = AgentConfig()
 	storage_file = agent_config.storage_state_path
+
+	user_profile = UserProfile.from_env_or_defaults()
+	if years_exp is not None:
+		user_profile.years_of_experience = years_exp
 
 	if login_first:
 		ctx = click.get_current_context()
@@ -316,6 +322,7 @@ def auto_command(
 			f'[yellow]Operating Mode:[/yellow] '
 			f'{"[bold green]FREE MODE (100% Autonomous Autopilot)[/bold green]" if selected_mode == "free" else "[bold yellow]ASK MODE (Human Confirmation Before Submit/Send)[/bold yellow]"}\n'
 			f'[yellow]Submission Mode:[/yellow] {"[dim]DRY RUN (Simulated)[/dim]" if dry_run else "[bold red]LIVE SUBMISSION[/bold red]"}\n'
+			f'[yellow]Candidate Experience:[/yellow] [bold cyan]{user_profile.years_of_experience:.1f} years[/bold cyan]\n'
 			f'[yellow]Target Roles:[/yellow] {roles}\n'
 			f'[yellow]Locations:[/yellow] {locations}\n'
 			f'[yellow]Platforms:[/yellow] {platforms}\n'

@@ -12,14 +12,19 @@ def build_linkedin_search_prompt(user: UserProfile, prefs: JobPreferences) -> st
 
 	encoded_role = urllib.parse.quote(role)
 	encoded_loc = urllib.parse.quote(location)
-	# Direct pre-filtered URL with f_AL=true (Easy Apply filter)
-	direct_search_url = f'https://www.linkedin.com/jobs/search/?keywords={encoded_role}&location={encoded_loc}&f_AL=true'
+	exp_param = prefs.get_linkedin_experience_param(user.years_of_experience)
+	# Direct pre-filtered URL with f_AL=true (Easy Apply) and experience parameter
+	direct_search_url = f'https://www.linkedin.com/jobs/search/?keywords={encoded_role}&location={encoded_loc}&f_AL=true{exp_param}'
 
 	return f"""
 You are an autonomous AI recruiter assistant searching LinkedIn for high-match jobs.
 
 YOUR OBJECTIVE:
-Catalog relevant postings (up to {max_postings} positions) and any visible recruiter/HR contacts into the tracker database.
+Catalog relevant postings matching candidate's role and experience level (up to {max_postings} positions) and any visible recruiter/HR contacts into the tracker database.
+
+CANDIDATE EXPERIENCE:
+- Candidate has {user.years_of_experience:.1f} years of professional experience.
+- When candidate has <= 1 year of experience: DO NOT save or apply to jobs requiring 2+ years of experience, and NEVER save jobs with 'Senior', 'Lead', 'Staff', or 'Principal' in the title!
 
 STEP-BY-STEP WORKFLOW:
 1. Navigate directly to: {direct_search_url}
@@ -46,13 +51,13 @@ STEP-BY-STEP WORKFLOW:
    f. RECRUITER / HIRING TEAM:
       - Check the posting for recruiter details ("Meet the hiring team" or "Posted by").
       - If visible, call save_hr_contact(job_url=..., hr_name=..., ...).
-   g. STRICT RELEVANCE CHECK BEFORE SAVING:
-      - Only save postings that genuinely match candidate's target role '{role}' and location '{location}'.
-      - If the posting is unrelated or on-site in a distant country without Remote, SKIP IT without calling save_job!
+   g. STRICT RELEVANCE & EXPERIENCE CHECK BEFORE SAVING:
+      - Only save postings that genuinely match candidate's target role '{role}', location '{location}', and experience ({user.years_of_experience:.1f} yrs).
+      - If the posting requires 2+ years or is Senior/Lead, SKIP IT without calling save_job!
       - If relevant, call save_job(platform="linkedin", ...) with all extracted details.
 4. Move to the next job card in the list. Scroll the list if needed.
 5. RESILIENCE & COMPLETION RULES:
-   - Focus on QUALITY and RELEVANCE over quantity. Never save irrelevant jobs.
+   - Focus on QUALITY and RELEVANCE over quantity. Never save irrelevant or over-experienced jobs.
    - If any individual job fails to load, simply click the next job card.
    - Do NOT click 'Easy Apply' to submit during this search phase.
    - Skip blacklisted companies: {prefs.blacklisted_companies}.
@@ -69,7 +74,11 @@ def build_wellfound_search_prompt(user: UserProfile, prefs: JobPreferences) -> s
 You are an autonomous AI recruiter searching Wellfound (formerly AngelList Talent) for startup jobs.
 
 YOUR OBJECTIVE:
-Catalog relevant tech jobs (up to {max_postings} positions) and any visible recruiter/founder contacts into the tracker database.
+Catalog relevant tech jobs (up to {max_postings} positions) matching candidate experience and any visible recruiter/founder contacts into the tracker database.
+
+CANDIDATE EXPERIENCE:
+- Candidate has {user.years_of_experience:.1f} years of professional experience.
+- DO NOT save jobs requiring 2+ years of experience, and DO NOT save Senior/Lead/Staff roles if candidate has <= 1 year of experience!
 
 STEP-BY-STEP WORKFLOW:
 
@@ -84,7 +93,7 @@ STEP-BY-STEP WORKFLOW:
    - You may configure the search filters:
      a. ROLE: Click the Role filter input, type '{role}', and click the matching autocomplete suggestion.
      b. LOCATION: Click the Location filter input, type '{location}', and select '{location}' from the dropdown.
-   - CHECK FOR RESTRICTIVE FILTERS: Wellfound frequently has default filter pills already active (such as '0-1 years' experience or specific cities). If you see restrictive filter pills, click the 'x' on them to remove them.
+   - CHECK FOR RESTRICTIVE FILTERS: Wellfound frequently has default filter pills already active. If you see restrictive filters, adjust them. If candidate has <= 1 year experience, ensure experience is set to 0-1 years (Junior / Entry-Level).
 
 3. ZERO-RESULTS RECOVERY (CRITICAL):
    - If after applying filters the page shows "0 results", "No jobs match your criteria", or an empty list:
@@ -93,12 +102,13 @@ STEP-BY-STEP WORKFLOW:
      c. If still 0 results, remove the '{role}' filter pill as well, OR refresh / navigate back to https://wellfound.com/jobs.
      d. FALL BACK TO THE VISIBLE FEED: Wellfound's default feed has active startup listings. Browse this visible feed directly!
 
-4. INSPECTING AND CATALOGING JOBS (STRICT RELEVANCE):
+4. INSPECTING AND CATALOGING JOBS (STRICT RELEVANCE & EXPERIENCE):
    - Browse through the job cards in the feed (focus on {role}, AI Engineer, Machine Learning, Data Science, Software Engineer, Backend, Fullstack, or Tech roles).
-   - For EACH relevant job:
+   - For EACH job:
      a. Click the job title or company card to view the full job posting details.
      b. If clicking opens a new tab, switch to the new tab, extract the information, call save_job, and close the tab to return to the feed.
-     c. Verify relevance to '{role}' and '{location}':
+     c. Verify relevance to '{role}', '{location}', and EXPERIENCE ({user.years_of_experience:.1f} yrs):
+        - If candidate has <= 1 year of experience and job requires 2+ years, or is 'Senior'/'Lead'/'Staff', DO NOT call save_job. Return to feed and inspect next job!
         - If the job is unrelated (e.g. Sales, Marketing, completely different stack, or on-site in a distant foreign country without Remote), DO NOT call save_job. Return to feed and inspect next job!
      d. If genuinely relevant, extract details:
         - Job title (e.g. 'AI Engineer - LLMs & Generative AI')
@@ -114,7 +124,7 @@ STEP-BY-STEP WORKFLOW:
      h. Proceed to the next job card and repeat.
 
 5. RESILIENCE & COMPLETION RULES:
-   - Focus on RELEVANCE over volume. Never save irrelevant postings just to increment count.
+   - Focus on RELEVANCE over volume. Never save irrelevant postings or jobs requiring too much experience.
    - If a filter is tricky or stubborn, scroll the default feed to inspect relevant startup listings.
    - If any individual job fails to load, immediately return to the feed and click the next listing.
    - Do NOT click 'Apply' to submit applications during this discovery phase.
