@@ -335,6 +335,15 @@ class JobTracker:
 			)
 			return cursor.rowcount
 
+	def reset_database(self) -> None:
+		"""Drop all tables and re-initialize a completely clean, fresh schema."""
+		with self._get_connection() as conn:
+			cursor = conn.cursor()
+			cursor.execute('DROP TABLE IF EXISTS cold_emails')
+			cursor.execute('DROP TABLE IF EXISTS interviews')
+			cursor.execute('DROP TABLE IF EXISTS jobs')
+		self._init_db()
+
 	def get_interviews(self, limit: int = 50) -> list[dict[str, Any]]:
 		"""Retrieve recorded interviews."""
 		with self._get_connection() as conn:

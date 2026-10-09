@@ -122,6 +122,13 @@ def test_database_lifecycle(temp_db: JobTracker, tmp_path: Path):
 	# Applied job must remain safe
 	assert temp_db.is_job_saved('https://example.com/jobs/123')
 
+	# Test reset_database
+	temp_db.reset_database()
+	stats_after_reset = temp_db.get_stats()
+	assert stats_after_reset['total_found'] == 0
+	assert stats_after_reset['total_applied'] == 0
+	assert not temp_db.is_job_saved('https://example.com/jobs/123')
+
 
 @pytest.mark.asyncio
 async def test_job_tools_actions(

@@ -581,6 +581,31 @@ def clean_command(min_fit: float, yes: bool) -> None:
 	console.print(f'[bold green]Successfully deleted {deleted} non-relevant job(s) from database.[/bold green]')
 
 
+@cli.command(name='reset-db')
+@click.option(
+	'--yes',
+	'-y',
+	is_flag=True,
+	help='Skip confirmation prompt and immediately reset the database',
+)
+def reset_db_command(yes: bool) -> None:
+	"""Completely reset the database, erasing all job records, emails, and tracking history."""
+	if not yes:
+		from rich.prompt import Confirm
+
+		confirmed = Confirm.ask(
+			'[bold red]WARNING: This will permanently erase ALL jobs, applications, and interview records from the database. Are you sure?[/bold red]',
+			default=False,
+		)
+		if not confirmed:
+			console.print('[yellow]Aborted database reset.[/yellow]')
+			return
+
+	tracker = JobTracker()
+	tracker.reset_database()
+	console.print('[bold green]Database has been completely reset and initialized to a clean state.[/bold green]')
+
+
 # ==============================================================================
 # INDIVIDUAL JOB DETAILS & MANAGEMENT (job group)
 # ==============================================================================
