@@ -310,6 +310,35 @@ class JobTracker:
 			cursor.execute("UPDATE jobs SET status = 'interview' WHERE id = ?", (job_id,))
 			return cursor.lastrowid or 0
 
+	def get_job_by_id(self, job_id: int) -> dict[str, Any] | None:
+		"""Retrieve a single job record by ID."""
+		with self._get_connection() as conn:
+			cursor = conn.cursor()
+			cursor.execute('SELECT * FROM jobs WHERE id = ?', (job_id,))
+			row = cursor.fetchone()
+			return dict(row) if row else None
+
+	def delete_job(self, job_id: int) -> bool:
+		"""Delete a job record by ID."""
+		with self._get_connection() as conn:
+			cursor = conn.cursor()
+			cursor.execute('DELETE FROM jobs WHERE id = ?', (job_id,))
+			return cursor.rowcount > 0
+
+	def get_interviews(self, limit: int = 50) -> list[dict[str, Any]]:
+		"""Retrieve recorded interviews."""
+		with self._get_connection() as conn:
+			cursor = conn.cursor()
+			cursor.execute('SELECT * FROM interviews ORDER BY created_at DESC LIMIT ?', (limit,))
+			return [dict(row) for row in cursor.fetchall()]
+
+	def get_cold_emails(self, limit: int = 50) -> list[dict[str, Any]]:
+		"""Retrieve logged cold emails."""
+		with self._get_connection() as conn:
+			cursor = conn.cursor()
+			cursor.execute('SELECT * FROM cold_emails ORDER BY sent_at DESC LIMIT ?', (limit,))
+			return [dict(row) for row in cursor.fetchall()]
+
 	def get_stats(self) -> dict[str, Any]:
 		"""Get high-level analytics on job hunt progress."""
 		with self._get_connection() as conn:

@@ -107,6 +107,8 @@ browseruse = "browser_use.cli:main"  # Alias for browser-use
 bu = "browser_use.cli:main"  # Alias for browser-use
 browser = "browser_use.cli:main"  # Alias for browser-use
 browser-use-tui = "browser_use.cli:browser_use_tui_main"  # Deprecated alias for browser-use
+job-agent = "job_agent.main:cli"
+jobagent = "job_agent.main:cli"
 
 [build-system]
 requires = ["hatchling==1.32.0"]
